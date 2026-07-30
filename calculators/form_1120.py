@@ -135,6 +135,30 @@ def calc_charitable(contribution: float, taxable_income_before_charitable: float
 
 # ── Capital Gains / Losses ────────────────────────────────────────────────────
 
+def calc_drd_246b(divs: float, ownership_pct: float,
+                  taxable_inc_before_drd: float) -> dict:
+    """§243 rate with the §246(b) taxable-income limit.
+
+    The limit is switched off when the full deduction creates or increases a net
+    operating loss (§246(b)(2)) — the classic trap, since the limited deduction
+    would otherwise be larger than the one the statute actually allows."""
+    if ownership_pct < 20:
+        rate, label = 0.50, "50% — Less than 20% ownership (§243(a)(1))"
+    elif ownership_pct < 80:
+        rate, label = 0.65, "65% — 20–79% ownership (§243(a)(2))"
+    else:
+        rate, label = 1.00, "100% — 80%+ ownership, affiliated group (§243(a)(3))"
+    step1 = divs * rate
+    step2 = taxable_inc_before_drd * rate
+    nol_rule = (taxable_inc_before_drd - step1) < 0
+    allowed = step1 if nol_rule else min(step1, step2)
+    note = ("NOL rule applies — Step 1 used (full DRD despite taxable income limit)"
+            if nol_rule else
+            f"Limited by {'Step 1 (dividends)' if step1 <= step2 else 'Step 2 (taxable income)'}")
+    return {"rate": rate, "label": label, "step1": step1, "step2": step2,
+            "nol_rule": nol_rule, "allowed": allowed, "note": note}
+
+
 def calc_capital(short_term_gain: float, long_term_gain: float,
                  capital_loss_carryforward: float = 0.0) -> dict:
     net_gain = short_term_gain + long_term_gain - capital_loss_carryforward

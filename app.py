@@ -3,7 +3,7 @@ from datetime import datetime
 
 import streamlit as st
 import streamlit.components.v1 as components
-from calculators.form_1120 import calculate_1120
+from calculators.form_1120 import calculate_1120, calc_drd_246b
 
 st.set_page_config(
     page_title="Form 1120 Tax Calculator",
@@ -996,23 +996,6 @@ def sec267_deferral():
     l13 = s.get("s267_l13_related", 0.0) + unrelated_factor * s.get("s267_l13_unrelated", 0.0)
     return {"l12": l12, "l13": l13, "total": l12 + l13, "applies": True}
 
-
-def calc_drd_246b(divs, ownership_pct, taxable_inc_before_drd):
-    if ownership_pct < 20:
-        rate, label = 0.50, "50% — Less than 20% ownership (§243(a)(1))"
-    elif ownership_pct < 80:
-        rate, label = 0.65, "65% — 20–79% ownership (§243(a)(2))"
-    else:
-        rate, label = 1.00, "100% — 80%+ ownership, affiliated group (§243(a)(3))"
-    step1 = divs * rate
-    step2 = taxable_inc_before_drd * rate
-    nol_rule = (taxable_inc_before_drd - step1) < 0
-    allowed = step1 if nol_rule else min(step1, step2)
-    note = ("NOL rule applies — Step 1 used (full DRD despite taxable income limit)"
-            if nol_rule else
-            f"Limited by {'Step 1 (dividends)' if step1 <= step2 else 'Step 2 (taxable income)'}")
-    return {"rate": rate, "label": label, "step1": step1, "step2": step2,
-            "nol_rule": nol_rule, "allowed": allowed, "note": note}
 
 def schedule_c_totals():
     s = st.session_state

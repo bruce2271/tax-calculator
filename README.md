@@ -143,12 +143,41 @@ Saved returns (`form1120_*.json`) contain taxpayer figures and are gitignored to
 
 ---
 
+## Tests
+
+```bash
+pip install pytest && python -m pytest tests/ -q
+```
+
+Two kinds of test, and the difference is the point:
+
+**Reproductions of IRS worked examples.** The expected figures come from Publication 542,
+not from this code, so they can fail. The §246(b) pair is the one worth reading: with a
+$75,000 operating loss and $100,000 of dividends, the *limited* deduction would be
+$16,250 — but because the full $65,000 deduction creates a net operating loss,
+§246(b)(2) switches the limit off and the whole $65,000 is allowed. Getting that
+backwards is the classic error, so it is pinned.
+
+**Regressions for bugs that actually shipped here.** Each names what went wrong: the
+§1211 double-count that reported taxable income of $40,000 instead of $70,000; the
+dividends that were deducted via the DRD but never added to total income; the `ati=None`
+crash that took out the whole results page; the §263A pool that evaporated because
+`calc_unicap` received a zero inventory base.
+
+The suite was checked by mutation: deleting the §246(b) NOL exception makes it fail. That
+exercise also exposed a blind spot — the original §172 vintage test used a pre-2018 pool
+smaller than 80% of taxable income, so capping it changed nothing and the mutant
+survived. The test now uses a pool large enough to prove a pre-2018 loss can take taxable
+income to zero, which is the entire reason vintage is tracked.
+
 ## Known limits
 
-- **No automated tests yet.** The tax logic in `calculators/form_1120.py` is 17 pure
-  functions and is the natural place to start.
+- **Coverage is the classic textbook set.** Checked against a real filer's deferred tax
+  footnote, several differences that dominate real returns are not modelled: §174
+  capitalised research, §197 intangible amortisation, ASC 842 leases, and stock
+  compensation.
 - **`app.py` is one large file.** Splitting it into Streamlit's `pages/` layout is the
-  obvious next refactor; it has been deferred until there are tests to make it safe.
+  obvious next refactor; the tests exist partly to make that safe.
 - Simplifications throughout: the §263A absorption ratio is the simplified method,
   state tax is Texas franchise only, CAMT and BEAT are threshold checks rather than full
   computations, and consolidated-return mechanics are out of scope.
