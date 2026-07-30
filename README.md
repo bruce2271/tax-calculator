@@ -29,6 +29,7 @@ book-tax reconciliations, and the return itself are derived from them.
 | **§263A UNICAP** | Percentage allocation across lines 12, 13, 14, 16, 17 and 20 into the inventory pool |
 | **§163(j)** | 30%-of-ATI limitation with indefinite carryforward and the §448(c) small-business exemption |
 | **§162(m), §274(n), §162(f)/(e)/(c), §276, §264, §267(a)(2), §170** | Disallowances and deferrals wired into both reconciliations |
+| **§174, §197, ASC 718, ASC 842** | The timing items that dominate real filings: research capitalised and amortised over 5 years, 15-year intangible amortisation, stock compensation, and leases |
 | **Year-end close** | Explicit rollforward that writes every carryforward, clears current-year amounts, advances the tax year, and refuses to run twice |
 | **Persistence** | Save / load the whole return as JSON, carryforwards and closed-year history included |
 
@@ -172,10 +173,9 @@ income to zero, which is the entire reason vintage is tracked.
 
 ## Known limits
 
-- **Coverage is the classic textbook set.** Checked against a real filer's deferred tax
-  footnote, several differences that dominate real returns are not modelled: §174
-  capitalised research, §197 intangible amortisation, ASC 842 leases, and stock
-  compensation.
+- **Coverage was checked against a real filer.** Winnebago's FY2024 deferred tax footnote
+  was used to find gaps; §174, §197, leases and stock compensation came from that
+  exercise. Warranty and self-insurance reserves and convertible debt are still absent.
 - **`app.py` is one large file.** Splitting it into Streamlit's `pages/` layout is the
   obvious next refactor; the tests exist partly to make that safe.
 - Simplifications throughout: the §263A absorption ratio is the simplified method,

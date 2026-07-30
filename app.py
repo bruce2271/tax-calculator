@@ -281,6 +281,11 @@ DEFAULTS = {
     "other_ded_book": 0.0, "other_ded_adj": 0.0,
     "indirect_costs": 0.0, "total_inventory_costs": 0.0,
     "nol_n": 1,
+    # Book-vs-tax pairs for the differences that dominate real filings.
+    "s174_book": 0.0, "s174_prior_amort": 0.0,
+    "intang_book": 0.0, "intang_tax": 0.0,
+    "sbc_book": 0.0, "sbc_tax": 0.0,
+    "lease_book": 0.0, "lease_tax": 0.0,
     "m1_fed_tax": 0.0, "m1_book_override": 0.0,
     "m1_l4_other": 0.0, "m1_l5_other": 0.0, "m1_l7_other": 0.0, "m1_l8_other": 0.0,
     "m3_fed_tax": 0.0, "m3_book_override": 0.0,
@@ -702,7 +707,8 @@ def build_1120_inputs(dividends_and_inclusions, special_deductions, nol_carryfor
                 s.benefits_book +
                 s.other_ded_book +
                 s.travel_book +
-                s.meals_book * 0.5
+                s.meals_book * 0.5 +
+                MODERN["tax_total"]
             ),
             "bad_debt_expense": s.bad_debt_tax,
             "bad_debt_reserve_book": s.bad_debt_book_reserve,
@@ -931,6 +937,30 @@ def nol_vintages():
     }
 
 
+def modern_diffs():
+    """The four book-tax differences that dominate a real filer's deferred tax note
+    but that a textbook Form 1120 problem never mentions.
+
+    Each is a book amount paired with a tax amount; the gap is temporary in every case
+    because all four eventually reverse. §174 is the one with a rule worth computing:
+    since 2022 domestic research must be capitalised and amortised over 5 years on a
+    mid-year convention, so only 10% of the current year's spend is deductible now."""
+    s = st.session_state
+    g = lambda k: s.get(k, 0.0)
+    s174_tax = g("s174_book") * 0.10 + g("s174_prior_amort")
+    rows = [
+        ("§174 research and experimental", "36", g("s174_book"), s174_tax),
+        ("§197 intangible amortisation and impairment", "29", g("intang_book"), g("intang_tax")),
+        ("Stock-based compensation (ASC 718 vs deduction on vesting)", "9",
+         g("sbc_book"), g("sbc_tax")),
+        ("Leases (ASC 842 lease cost vs rent deducted)", "35", g("lease_book"), g("lease_tax")),
+    ]
+    return {"rows": [{"label": l, "m3_line": ln, "book": b, "tax": t} for l, ln, b, t in rows],
+            "book_total": sum(r[2] for r in rows),
+            "tax_total": sum(r[3] for r in rows),
+            "s174_tax": s174_tax}
+
+
 def form_1125a_base():
     """Form 1125-A before any §263A loading. These feed calculate_1120 so the module's
     own UNICAP computation reproduces the absorption split shown on screen instead of
@@ -1037,6 +1067,7 @@ def schedule_c_totals():
             "line23": line23,
             "line24": drd["allowed"] + sec250}           # column (c) — special deductions
 
+MODERN = modern_diffs()
 F1125A = form_1125a_base()
 S263A = sec263a_status()
 S267 = sec267_deferral()
@@ -1127,7 +1158,7 @@ def book_income_derived(federal_tax_per_books=0.0):
         "book_depreciation", "advertising_book", "pension_book", "benefits_book",
         "meals_book", "entertainment_book", "travel_book", "fines_book",
         "lobbying_book", "bribes_book", "political_book", "key_ins_book",
-        "other_ded_book"))
+        "other_ded_book")) + MODERN["book_total"]
     return {"pretax": revenue - expenses,
             "net": revenue - expenses - federal_tax_per_books,
             "revenue": revenue, "expenses": expenses}
@@ -1171,6 +1202,10 @@ def m1_lines():
          S263A["l12"] + S263A["l13"] + S263A["l14"] + S263A["l16"] + S263A["l17"]),
         ("§267(a)(2) related-party accrual deferred", S267["l12"] + S267["l13"]),
         ("COGS — book in excess of tax", max(0.0, -cogs_diff)),
+    ] + [
+        (f"{r['label']} — book in excess of tax", max(0.0, r["book"] - r["tax"]))
+        for r in MODERN["rows"]
+    ] + [
         ("Other (manual)", g("m1_l5_other")),
     ]
     l7_items = [
@@ -1187,6 +1222,10 @@ def m1_lines():
         ("8a Depreciation — tax in excess of book", max(0.0, d["depreciation"] - g("book_depreciation"))),
         ("Bad debt — §166 charge-off over book reserve", max(0.0, g("bad_debt_tax") - g("bad_debt_book_reserve"))),
         ("COGS — tax in excess of book", max(0.0, cogs_diff)),
+    ] + [
+        (f"{r['label']} — tax in excess of book", max(0.0, r["tax"] - r["book"]))
+        for r in MODERN["rows"]
+    ] + [
         ("Other (manual)", g("m1_l8_other")),
     ]
 
@@ -1277,6 +1316,23 @@ def m3_lines():
             note="§166 specific charge-off vs book reserve — temporary."),
         row("34", "Corporate owned life insurance premiums", g("key_ins_book"), 0.0,
             perm=-g("key_ins_book"), note="§264 — permanent."),
+        row("9", "Stock option and other equity-based compensation",
+            g("sbc_book"), g("sbc_tax"),
+            note="ASC 718 expenses over the vesting period; tax deducts on vesting or "
+                 "exercise. Temporary."),
+        row("29", "Other amortization or impairment write-offs",
+            g("intang_book"), g("intang_tax"),
+            note="§197 amortises acquired intangibles over 15 years regardless of the "
+                 "book life, and book impairment is not a tax event. Temporary."),
+        row("35", "Purchase versus lease",
+            g("lease_book"), g("lease_tax"),
+            note="ASC 842 splits a lease into amortisation and interest; tax deducts the "
+                 "rent actually paid. Temporary."),
+        row("36", "Research and development costs",
+            g("s174_book"), MODERN["s174_tax"],
+            note="§174 since 2022 — domestic research is capitalised and amortised over "
+                 "5 years, mid-year convention, so only 10% of this year's spend is "
+                 "deductible now. Temporary, and usually large."),
         row("38", "Other expense/deduction items with differences",
             sum(x[1] for x in o38), sum(x[2] for x in o38), perm=sum(x[3] for x in o38),
             note="Everything with no dedicated M-3 line — see the breakdown below."),
@@ -2392,6 +2448,64 @@ skipped, so it is worth knowing.
             st.info(f"**Total deduction year 1: \\${total_yr1:,.0f}** (immediate \\${immediate:,.0f} + amortization \\${amort_y1:,.0f})")
             if total >= 55_000:
                 st.warning(f"Total costs ≥ \\$55,000 → immediate deduction fully phased out. Entire \\${total:,.0f} amortized over 180 months.")
+
+    st.markdown("## Book-vs-Tax Timing Items")
+    st.markdown(
+        "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;margin:8px 0;"
+        "color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+        "These four are the differences that dominate a real filer's deferred tax note, and "
+        "the ones a textbook Form 1120 problem never mentions. Enter the book charge and the "
+        "tax deduction; the gap flows to Schedule M-1 lines 5 and 8 and to its own Schedule "
+        "M-3 line. All four are <b>temporary</b> — they reverse, they do not disappear."
+        "</div>", unsafe_allow_html=True)
+
+    _m1, _m2 = st.columns(2)
+    with _m1:
+        st.markdown("**§174 — Research and experimental**")
+        st.number_input("Book R&D expense for the year ($)", min_value=0.0, step=10_000.0,
+                        format="%.2f", key="s174_book")
+        st.number_input("§174 amortisation from prior-year pools ($)", min_value=0.0,
+                        step=10_000.0, format="%.2f", key="s174_prior_amort")
+        st.caption(f"Tax deduction {'$'}{MODERN['s174_tax']:,.0f} "
+                   f"— 10% of this year's spend (5-year straight line, mid-year "
+                   f"convention) plus prior pools.")
+
+        st.markdown("**Stock-based compensation**")
+        st.number_input("Book expense — ASC 718 ($)", min_value=0.0, step=10_000.0,
+                        format="%.2f", key="sbc_book")
+        st.number_input("Tax deduction on vesting / exercise ($)", min_value=0.0,
+                        step=10_000.0, format="%.2f", key="sbc_tax")
+    with _m2:
+        st.markdown("**§197 — Intangibles**")
+        st.number_input("Book amortisation and impairment ($)", min_value=0.0, step=10_000.0,
+                        format="%.2f", key="intang_book")
+        st.number_input("§197 amortisation — basis ÷ 15 ($)", min_value=0.0, step=10_000.0,
+                        format="%.2f", key="intang_tax")
+
+        st.markdown("**Leases — ASC 842**")
+        st.number_input("Book lease cost ($)", min_value=0.0, step=10_000.0,
+                        format="%.2f", key="lease_book")
+        st.number_input("Rent actually deducted for tax ($)", min_value=0.0, step=10_000.0,
+                        format="%.2f", key="lease_tax")
+
+    irc([
+        "<b>§174 (as amended by the TCJA, effective 2022):</b> domestic research must be "
+        "<b>capitalised</b> and amortised over 5 years; foreign research over 15. A mid-year "
+        "convention applies, so the first year gives only <b>10%</b> of the spend. This "
+        "reversed decades of immediate expensing and is now one of the largest deferred tax "
+        "assets on many balance sheets.",
+        "<b>§197:</b> acquired intangibles — goodwill, customer lists, covenants not to compete — "
+        "amortise straight-line over <b>15 years</b> whatever the book life. A book impairment "
+        "is never a tax event, so it is added back in full and released only as the §197 "
+        "amortisation runs.",
+        "<b>Stock compensation:</b> book expense accrues over the vesting period under ASC 718; "
+        "the tax deduction arrives on vesting (RSUs) or exercise (NQSOs) and is measured by the "
+        "value <i>then</i>. The excess or shortfall against the book charge is a permanent "
+        "item — enter it separately on the M-3 line 38 manual box.",
+        "<b>Leases:</b> ASC 842 puts a right-of-use asset and a lease liability on the balance "
+        "sheet and splits the cost; tax simply deducts the rent paid under §162(a)(3). The "
+        "difference unwinds over the lease term.",
+    ])
 
     st.markdown("## Other Deductions")
     col_headers("deduction")
