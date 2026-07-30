@@ -1,0 +1,35 @@
+# ── Secrets — never commit. Load anything sensitive from the environment. ─────
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
+credentials*
+service-account*.json
+
+# ── Saved returns — these contain taxpayer figures. Keep them out of git. ─────
+form1120_*.json
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Local tooling and editors ────────────────────────────────────────────────
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Working notes ────────────────────────────────────────────────────────────
+scratch_*.txt

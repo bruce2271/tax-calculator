@@ -1,0 +1,5 @@
+# Pinned deliberately. The app injects CSS that targets Streamlit's internal
+# DOM (data-testid attributes, emotion class names) in ~68 places, so a minor
+# Streamlit release can change the markup and break the styling silently.
+# Upgrade on purpose, then re-check the theming and the Schedule tabs.
+streamlit==1.59.1
