@@ -252,6 +252,40 @@ permanent and temporary differences together, and it is federal-only against wor
 pretax income, so heavy foreign operations read low for reasons that have nothing to do
 with book-tax differences.
 
+## What the model cannot say
+
+The Winnebago walk-through above proves internal consistency and nothing more — the
+inputs were derived from the answer by grossing the disclosed rate lines up at 21%, so
+re-applying 21% only inverts that arithmetic. Saying otherwise would be overclaiming.
+
+`analysis/reconcile_provision.py` asks a question that is not circular. Every filer's
+provision differs from 21% of pretax income, and the rate reconciliation lists the
+reasons. How much of that gap can this model's vocabulary account for?
+
+```
+  all filers                                       n=2379   median 24.2%  within 5%: 18.5%
+  no foreign rate differential                     n=1286   median 22.2%  within 5%: 19.6%
+  no foreign differential, no valuation allowance   n=584   median 20.9%  within 5%: 20.4%
+```
+
+About one filer in five is fully explained, and they are exactly the profile the model
+targets — Cal-Maine, Lowe's, CSX, Nobility Homes: US operating companies with ordinary
+tax positions. Narrowing to domestic filers with no valuation allowance barely improves
+the median, which is the honest result rather than the flattering one.
+
+The residual mixes two different things, and only the first is a real gap:
+
+- **Positions the model has no line for.** The largest residuals name them precisely —
+  Ascend Wellness (§280E, which denies cannabis businesses ordinary deductions), Northern
+  States Power (regulated-utility excess deferred tax amortisation), Summit Midstream and
+  PotlatchDeltic (pass-through and REIT structures where income is not taxed at entity
+  level at all).
+- **Custom XBRL extension tags.** Filers routinely tag their own reconciling lines rather
+  than using the standard element, and no enumeration of standard tags can capture those.
+
+A first check in the same script guards the whole exercise: the disclosed statutory line
+equals 21% of pretax income for 83.8% of filers, so the join and the tag names are sound.
+
 ## Known limits
 
 - **Coverage was checked against a real filer.** Winnebago's FY2024 deferred tax footnote
