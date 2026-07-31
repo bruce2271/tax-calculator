@@ -227,6 +227,31 @@ carries the derivation of each figure from the published rate lines in a comment
 Keying these figures in is also what surfaced the §170 loss-year bug now pinned in the
 test suite.
 
+## Why the differences are the whole job
+
+`analysis/effective_federal_rate.py` pulls every public filer that reported both a
+current federal tax provision and pretax book income for CY2024 from the SEC's XBRL
+frames API — 1,710 profitable filers after filtering — and asks how close their federal
+tax is to 21% of book income.
+
+```
+   10th pct    1.7%
+   25th pct    6.8%
+     median   15.7%
+     75th pct 20.9%
+   90th pct   30.1%
+
+  within 21% +/- 2pp: 16.0% of filers
+```
+
+If book income were taxable income this would be a spike at 21%. Five filers in six sit
+somewhere else. That is the case for modelling the differences rather than the rate.
+
+Read it carefully, though: the numerator is the *current* provision, so the gap reflects
+permanent and temporary differences together, and it is federal-only against worldwide
+pretax income, so heavy foreign operations read low for reasons that have nothing to do
+with book-tax differences.
+
 ## Known limits
 
 - **Coverage was checked against a real filer.** Winnebago's FY2024 deferred tax footnote
