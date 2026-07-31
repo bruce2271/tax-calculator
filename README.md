@@ -252,6 +252,26 @@ permanent and temporary differences together, and it is federal-only against wor
 pretax income, so heavy foreign operations read low for reasons that have nothing to do
 with book-tax differences.
 
+## A test case built to be run somewhere else
+
+[`examples/acme-2024.md`](examples/acme-2024.md) is a fictional calendar-2024 C
+corporation specified precisely enough to key into commercial tax software and compare
+line by line. Differential testing against an independent implementation is the only
+validation here that is not circular, and the fact pattern is designed to remove
+disagreements that would say nothing about the tax logic — the asset was placed in
+service two years earlier so no bonus election is in play, the dividends come from a
+corporation under 20% owned so the DRD rate is unambiguous, and gross receipts sit under
+the §448(c) threshold so §163(j) does not apply.
+
+The model produces taxable income of $378,590 and tax of $79,504 on those facts, with
+every intermediate line tabulated for comparison.
+
+Constructing it found two bugs before it was run anywhere else. The §170(b)(2) base was
+omitting bad debts, inflating the charitable limit by $4,000. And book income was using
+Schedule D line 18, which §1211(a) has already floored at zero, so the disallowed capital
+loss was excluded from book income and then added back again on Schedule M-1 — the
+integrity check caught that one, landing M-1 $30,000 above line 28.
+
 ## What the model cannot say
 
 The Winnebago walk-through above proves internal consistency and nothing more — the

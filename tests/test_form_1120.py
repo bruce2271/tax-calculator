@@ -170,6 +170,29 @@ def test_170_loss_year_defers_an_actual_contribution_in_full():
     assert r["carryforward_5yr"] == 50_000
 
 
+def test_170_regression_every_ordinary_deduction_reduces_the_limit_base():
+    """REGRESSION, found while building the ACME differential test. §170(b)(2)(C) computes
+    the base without the charitable deduction, the special deductions, and NOL or capital
+    loss carrybacks — everything else still comes off. Bad debts were being left in, which
+    inflated the base and so the limit.
+
+    In the ACME fact pattern the $40,000 §166 charge-off moved the limit from $90,510 to
+    $86,510 — $840 of tax, and a mismatch against any other package."""
+    base = dict(gross_revenue=8_230_000, cogs=4_000_000, operating_expenses=2_250_000,
+                officer_compensation=600_000, book_depreciation=0, asset_cost=0,
+                depreciation_method="macrs", interest_expense=300_000,
+                small_business_exempt=True, charitable_contributions=150_000, ati=None)
+
+    without = calculate_1120(dict(base, bad_debt_expense=0))
+    with_bad_debt = calculate_1120(dict(base, bad_debt_expense=40_000))
+
+    assert without["deductions"]["charitable"]["limit"] == pytest.approx(108_000)
+    assert with_bad_debt["deductions"]["charitable"]["limit"] == pytest.approx(104_000)
+    # The invariant, independent of the rest of the fact pattern.
+    assert (without["deductions"]["charitable"]["limit"]
+            - with_bad_debt["deductions"]["charitable"]["limit"]) == pytest.approx(4_000)
+
+
 def test_170_ten_percent_limit_and_five_year_carryforward():
     r = calc_charitable(contribution=90_000, taxable_income_before_charitable=500_000)
     assert r["limit"] == 50_000

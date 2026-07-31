@@ -448,10 +448,14 @@ def calculate_1120(inputs: dict) -> dict:
 
     operating_expenses = inputs.get("operating_expenses", 0)
 
-    # Charitable — 10% limit applied after other deductions
+    # §170(b)(2)(C): the 10% base is taxable income computed without the charitable
+    # deduction itself, without the special deductions, and without an NOL or capital
+    # loss *carryback*. Every other deduction reduces it — including bad debts, which
+    # were once missed here and quietly inflated the limit.
     pre_charitable_income = (total_income - cogs - operating_expenses
                              - deductible_officer_comp - depreciation
-                             - interest_result["deductible"])
+                             - interest_result["deductible"]
+                             - inputs.get("bad_debt_expense", 0))
     charitable = calc_charitable(inputs.get("charitable_contributions", 0),
                                  pre_charitable_income)
 

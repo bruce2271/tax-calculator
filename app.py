@@ -1127,7 +1127,10 @@ def book_income_derived(federal_tax_per_books=0.0):
                - F1125A["cogs"]
                + g("dividends_book") + g("interest_income_book")
                + g("gross_rents_book") + g("gross_royalties_book")
-               + SD["l18"]                      # books take the full capital result
+               # Books take the whole capital result. SD line 18 is already floored at
+               # zero by §1211(a), so the disallowed loss has to be put back — otherwise
+               # book income excludes it and Schedule M-1 line 3 adds it a second time.
+               + SD["l18"] - SD["net_loss"]
                + F4797["l17"] + g("other_income_book"))
     expenses = sum(g(k) for k in (
         "comp_officers_book", "salaries_book", "repairs_book", "bad_debt_book_reserve",

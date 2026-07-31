@@ -1,0 +1,78 @@
+{
+  "app": "form-1120-calculator",
+  "schema": 1,
+  "tax_year": 2024,
+  "saved_at": "2026-07-30T00:00:00",
+  "closed_years": [],
+  "_comment": [
+    "ACME Manufacturing Inc. — a fictional calendar-2024 C corporation built to be keyed",
+    "into commercial tax software and compared line by line. See acme-2024.md.",
+    "",
+    "Design notes:",
+    "  * No foreign operations, no CFC, not publicly traded — nothing that would make",
+    "    another package ask questions this one does not.",
+    "  * Dividends come from a corporation less than 20% owned, so the DRD rate is the",
+    "    50% default and no ownership slider has to be set.",
+    "  * The asset was placed in service in 2022, so 2024 depreciation is pure MACRS",
+    "    table with no first-year bonus election to disagree about.",
+    "  * Average gross receipts are well under the §448(c) threshold, so §163(j) does",
+    "    not apply and all interest stays deductible.",
+    "  * §263A percentages are left at zero. Absorption is judgment-dependent and would",
+    "    inject noise into a comparison meant to test the return skeleton."
+  ],
+  "state": {
+    "tax_year": 2024,
+    "active_form": "📋 Form 1120",
+
+    "gross_receipts_book": 8000000.0,
+    "returns_allowances_book": 100000.0,
+    "dividends_book": 200000.0,
+    "ownership_pct": 0,
+    "interest_income_book": 120000.0,
+    "interest_income_adj": 50000.0,
+
+    "f1125a_beg_inv": 900000.0,
+    "f1125a_purchases": 3200000.0,
+    "f1125a_labor": 800000.0,
+    "f1125a_other": 200000.0,
+    "f1125a_end_inv": 1100000.0,
+
+    "sd_l1a": 30000.0,
+    "sd_l8a": -80000.0,
+
+    "f4797_n_props": 1,
+    "f4797_price_0": 120000.0,
+    "f4797_basis_0": 100000.0,
+    "f4797_dep_0": 60000.0,
+
+    "comp_officers_book": 600000.0,
+    "salaries_book": 1400000.0,
+    "repairs_book": 80000.0,
+    "bad_debt_book_reserve": 70000.0,
+    "bad_debt_tax": 40000.0,
+    "rents_book": 240000.0,
+    "taxes_book": 180000.0,
+    "interest_book": 300000.0,
+    "charitable_book": 150000.0,
+
+    "dep_method": "MACRS",
+    "asset_cost": 1000000.0,
+    "year_placed": 2022,
+    "macrs_life": 7,
+    "book_depreciation": 200000.0,
+
+    "advertising_book": 120000.0,
+    "pension_book": 90000.0,
+    "benefits_book": 110000.0,
+    "meals_book": 60000.0,
+    "fines_book": 25000.0,
+    "lobbying_book": 15000.0,
+
+    "avg_gross_receipts_3yr": 8000000.0,
+    "nol_n": 1,
+    "nol_year_0": 2023,
+    "nol_amt_0": 300000.0,
+
+    "total_assets": 6000000.0
+  }
+}
