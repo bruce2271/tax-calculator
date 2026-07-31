@@ -150,6 +150,24 @@ def test_163j_small_business_is_outside_the_limitation_entirely():
 
 # ── §170(b)(2) — charitable contributions ────────────────────────────────────
 
+def test_170_regression_loss_year_must_not_invent_a_negative_deduction():
+    """REGRESSION, found by keying a real filer's figures in. With no contributions and a
+    loss before the charitable step, 10% of a negative number gave a limit of $(201,000),
+    so min(0, -201,000) reported a *negative* deduction — which increases taxable income —
+    and a $201,000 carryforward for a corporation that had given nothing."""
+    r = calc_charitable(contribution=0, taxable_income_before_charitable=-2_010_000)
+    assert r["limit"] == 0
+    assert r["deductible"] == 0
+    assert r["carryforward_5yr"] == 0
+
+
+def test_170_loss_year_defers_an_actual_contribution_in_full():
+    """A real gift in a loss year is not lost — none is deductible now, all carries."""
+    r = calc_charitable(contribution=50_000, taxable_income_before_charitable=-100_000)
+    assert r["deductible"] == 0
+    assert r["carryforward_5yr"] == 50_000
+
+
 def test_170_ten_percent_limit_and_five_year_carryforward():
     r = calc_charitable(contribution=90_000, taxable_income_before_charitable=500_000)
     assert r["limit"] == 50_000

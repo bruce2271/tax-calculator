@@ -171,6 +171,43 @@ smaller than 80% of taxable income, so capping it changed nothing and the mutant
 survived. The test now uses a pool large enough to prove a pre-2018 loss can take taxable
 income to zero, which is the entire reason vintage is tracked.
 
+## Checked against a real filer
+
+A corporation's Form 1120 is confidential under §6103, so no public filing can validate
+the return itself. What *is* public is the ASC 740 tax footnote — and the effective tax
+rate reconciliation in it is, structurally, a schedule of permanent differences. That
+makes it something this model can be pointed at.
+
+Winnebago Industries, FY2024 (year ended 31 August 2024). Their disclosed reconciliation
+runs from the 21% statutory rate to a 66.2% effective rate, driven by a non-deductible
+goodwill impairment and a non-deductible debt inducement charge. Grossing each rate line
+up at 21% gives the underlying dollar difference; those were the only inputs:
+
+| Input | From their disclosure |
+|---|---|
+| Taxable revenue | $114.20M |
+| Tax-exempt interest and dividend income | $2.01M (−1.1% rate line) |
+| Permanently non-deductible charges | $77.84M (§162(m) 6.6%, debt inducement 19.4%, goodwill 16.6%) |
+| General business credits | $3.42M (−8.9%) |
+
+| Result | Model | Winnebago |
+|---|---|---|
+| Net income per books | **$38,370,000** | $38.37M — their provision of $25.4M ÷ 66.2% |
+| Federal tax at 21% | **$23,982,000** | 21.0% + permanents = $23.98M |
+| After credits | **$20,562,000** | — |
+| Federal provision | $20.56M + valuation allowance $1.92M − uncertain positions $0.65M + other $0.35M = **$22.18M** | $25.40M total − $3.22M state = **$22.18M** |
+
+Book income is the figure worth noticing: nothing told the model what it was. It was
+derived from the ledger accounts, and it landed on their pretax income independently.
+
+The last three reconciling items are the honest boundary. A valuation allowance and an
+uncertain tax position are ASC 740 constructs about *recognising* tax in financial
+statements; neither exists anywhere on a tax return, so a return model should not produce
+them.
+
+Keying these figures in is also what surfaced the §170 loss-year bug now pinned in the
+test suite.
+
 ## Known limits
 
 - **Coverage was checked against a real filer.** Winnebago's FY2024 deferred tax footnote

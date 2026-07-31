@@ -127,7 +127,10 @@ def calc_163j(interest_expense: float, ati: float,
 # ── Charitable Contributions ──────────────────────────────────────────────────
 
 def calc_charitable(contribution: float, taxable_income_before_charitable: float) -> dict:
-    limit = taxable_income_before_charitable * 0.10
+    """§170(b)(2). The limit floors at zero: in a loss year 10% of a negative figure is
+    negative, which would otherwise produce a negative "deduction" that increases
+    taxable income and conjures a carryforward out of a corporation that gave nothing."""
+    limit = max(0.0, taxable_income_before_charitable * 0.10)
     deductible = min(contribution, limit)
     carryforward = max(0, contribution - deductible)
     return {"deductible": deductible, "carryforward_5yr": carryforward, "limit": limit}

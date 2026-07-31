@@ -278,6 +278,7 @@ DEFAULTS = {
     "bribes_book": 0.0,
     "political_book": 0.0,
     "key_ins_book": 0.0,
+    "other_perm_book": 0.0,
     "other_ded_book": 0.0, "other_ded_adj": 0.0,
     "indirect_costs": 0.0, "total_inventory_costs": 0.0,
     "nol_n": 1,
@@ -1158,7 +1159,7 @@ def book_income_derived(federal_tax_per_books=0.0):
         "book_depreciation", "advertising_book", "pension_book", "benefits_book",
         "meals_book", "entertainment_book", "travel_book", "fines_book",
         "lobbying_book", "bribes_book", "political_book", "key_ins_book",
-        "other_ded_book")) + MODERN["book_total"]
+        "other_ded_book", "other_perm_book")) + MODERN["book_total"]
     return {"pretax": revenue - expenses,
             "net": revenue - expenses - federal_tax_per_books,
             "revenue": revenue, "expenses": expenses}
@@ -1195,6 +1196,7 @@ def m1_lines():
         ("Bribes and kickbacks (§162(c))", g("bribes_book")),
         ("Political contributions (§276)", g("political_book")),
         ("Key employee life insurance (§264)", g("key_ins_book")),
+        ("Other permanently non-deductible expense", g("other_perm_book")),
         ("Bad debt — book reserve over §166 charge-off", max(0.0, g("bad_debt_book_reserve") - g("bad_debt_tax"))),
         ("§163(j) disallowed business interest", d["interest"]["excess_carryforward"]),
         ("§162(m) excess officer compensation", g("m162_total_disallowed") + d["section_162m_disallowed"]),
@@ -1290,6 +1292,7 @@ def m3_lines():
         ("Lobbying (§162(e))", g("lobbying_book"), 0.0, -g("lobbying_book")),
         ("Bribes and kickbacks (§162(c))", g("bribes_book"), 0.0, -g("bribes_book")),
         ("Political contributions (§276)", g("political_book"), 0.0, -g("political_book")),
+        ("Other permanently non-deductible", g("other_perm_book"), 0.0, -g("other_perm_book")),
         ("Other (manual)", 0.0, g("m3_other_iii_temp") + g("m3_other_iii_perm"), g("m3_other_iii_perm")),
     ]
     meals = g("meals_book")
@@ -2577,6 +2580,10 @@ skipped, so it is worth knowing.
     _, bri_b,   _  = tax_row("—", "Bribes & Kickbacks §162(c) — 100% disallowed",             "bribes_book",        auto_adj_pct=1.0, mode="deduction")
     _, pol_b,   _  = tax_row("—", "Political Contributions §276 — 100% disallowed",            "political_book",     auto_adj_pct=1.0, mode="deduction")
     _, ins_b,   _  = tax_row("—", "Key Employee Life Insurance Premiums §264 — 100% disallowed","key_ins_book",      auto_adj_pct=1.0, mode="deduction")
+    _, oth_perm, _ = tax_row("—", "Other permanently non-deductible expense — 100% disallowed", "other_perm_book", auto_adj_pct=1.0, mode="deduction")
+    st.caption("For book charges that never become a deduction and have no dedicated line: "
+               "goodwill impairment on stock-acquired basis, non-deductible debt inducement "
+               "or extinguishment costs, disallowed transaction costs.")
     irc([
         "§162(f): Fines/penalties to government — non-deductible.",
         "§162(c): Bribes/kickbacks — non-deductible.",
