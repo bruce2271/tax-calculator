@@ -165,11 +165,26 @@ dividends that were deducted via the DRD but never added to total income; the `a
 crash that took out the whole results page; the §263A pool that evaporated because
 `calc_unicap` received a zero inventory base.
 
-The suite was checked by mutation: deleting the §246(b) NOL exception makes it fail. That
-exercise also exposed a blind spot — the original §172 vintage test used a pre-2018 pool
-smaller than 80% of taxable income, so capping it changed nothing and the mutant
-survived. The test now uses a pool large enough to prove a pre-2018 loss can take taxable
-income to zero, which is the entire reason vintage is tracked.
+**The mechanics that are easy to get wrong.** §1245 recapture stops at the depreciation
+actually taken, so gain above original cost keeps §1231 character. §291(a)(1) recaptures
+20% of that figure on corporate real property — a corporate-only rule an individual
+selling the same building never meets. The §1231(c) look-back turns a net gain ordinary
+to the extent of unrecaptured losses from the last five years, oldest first, while a net
+loss stays fully ordinary and does not touch the pool. §263A absorbs the indirect-cost
+pool in the ratio of goods sold, so a pure inventory-build year absorbs nothing.
+
+**The suite is checked by mutation.** Deleting the §246(b) NOL exception, removing the
+§1245 cap, dropping the §291 20% rate, or reversing the look-back order each make it
+fail. That exercise has already earned its keep: it exposed a blind spot where the §172
+vintage test used a pre-2018 pool smaller than 80% of taxable income, so capping the pool
+changed nothing and the mutant survived. The test now uses a pool large enough to prove a
+pre-2018 loss can take taxable income to zero, which is the entire reason vintage is
+tracked.
+
+Tests reach the module rather than the Streamlit layer, so anything worth testing has to
+be a pure function taking explicit arguments. Pulling `calc_drd_246b`, `calc_4797_recapture`
+and `calc_1231_lookback` out of the page code to test them is why they now live in
+`calculators/`.
 
 ## Checked against a real filer
 

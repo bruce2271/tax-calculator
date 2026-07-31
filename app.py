@@ -3,7 +3,8 @@ from datetime import datetime
 
 import streamlit as st
 import streamlit.components.v1 as components
-from calculators.form_1120 import calculate_1120, calc_drd_246b
+from calculators.form_1120 import (calculate_1120, calc_drd_246b,
+                                   calc_4797_recapture, calc_1231_lookback)
 
 st.set_page_config(
     page_title="Form 1120 Tax Calculator",
@@ -795,18 +796,11 @@ def form_4797_totals():
         basis = s.get(f"f4797_basis_{i}", 0.0)
         dep   = s.get(f"f4797_dep_{i}", 0.0)
         kind  = s.get(f"f4797_type_{i}", "§1245 — Personal property")
-        adj_basis = basis - dep                       # line 23
-        gain = price - adj_basis                      # line 24
-        if gain <= 0:
-            recap = 0.0
-        elif "1245" in kind:
-            recap = min(gain, dep)                    # line 25b
-        else:
-            recap = 0.20 * min(gain, dep)             # §291(a)(1) for C corps — line 26g
+        r = calc_4797_recapture(price, basis, dep, is_1245=("1245" in kind))
         props.append({"i": i, "name": s.get(f"f4797_desc_{i}", f"Property {chr(65+i)}"),
                       "kind": kind, "price": price, "basis": basis, "dep": dep,
-                      "adj_basis": adj_basis, "gain": gain, "recapture": recap,
-                      "sec1231": gain - recap})
+                      "adj_basis": r["adj_basis"], "gain": r["gain"],
+                      "recapture": r["recapture"], "sec1231": r["sec1231"]})
     l30 = sum(p["gain"] for p in props)
     l31 = sum(p["recapture"] for p in props)          # → Part II line 13
     l32 = l30 - l31                                   # → Part I line 6
@@ -819,30 +813,12 @@ def form_4797_totals():
     l6 = l32
     l7 = l2 + l3 + l4 + l5 + l6
 
-    lb_rows, pool = [], 0.0
-    for y in range(_cy - 5, _cy):
-        loss = s.get(f"f4797_lb_loss_{y}", 0.0)
-        prior = s.get(f"f4797_lb_recap_{y}", 0.0)
-        avail = max(0.0, loss - prior)
-        lb_rows.append({"year": y, "loss": loss, "prior": prior, "avail": avail})
-        pool += avail
-    l8 = pool if l7 > 0 else 0.0                      # line 8 only matters against a gain
-
-    # §1231(c): apply oldest year first, for display
-    remaining = l7 if l7 > 0 else 0.0
-    for r in lb_rows:
-        r["used"] = min(r["avail"], remaining)
-        remaining -= r["used"]
-
-    if l7 <= 0:
-        l9, l11, l12, sd_ltcg = 0.0, l7, 0.0, 0.0     # net §1231 loss → ordinary, line 11
-    else:
-        l9 = max(0.0, l7 - l8)
-        l11 = 0.0
-        if l9 == 0:
-            l12, sd_ltcg = l7, 0.0                    # fully recaptured as ordinary
-        else:
-            l12, sd_ltcg = l8, l9                     # line 8 ordinary, line 9 → Schedule D
+    LB = calc_1231_lookback(l7, [(y, s.get(f"f4797_lb_loss_{y}", 0.0),
+                                     s.get(f"f4797_lb_recap_{y}", 0.0))
+                                 for y in range(_cy - 5, _cy)])
+    lb_rows = LB["rows"]
+    l8, l9, l11, l12 = LB["line8"], LB["line9"], LB["line11"], LB["line12"]
+    sd_ltcg = LB["schedule_d_ltcg"]
 
     # ── Part II — ordinary
     l10 = s.get("f4797_l10", 0.0)

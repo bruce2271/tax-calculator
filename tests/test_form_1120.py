@@ -13,6 +13,8 @@ import pytest
 
 from calculators.form_1120 import (
     calc_163j,
+    calc_1231_lookback,
+    calc_4797_recapture,
     calc_capital,
     calc_charitable,
     calc_drd_246b,
@@ -192,6 +194,115 @@ def test_263a_regression_capitalised_costs_must_not_vanish():
     assert calc_unicap(1_600_030, 0, 0) == 0.0, "documents the failing shape"
     assert calc_unicap(1_600_030, 700_000, 1_000_000) > 0, \
         "with a real inventory pool the costs must reach COGS"
+
+
+# ── §1245 / §1250 / §291 — depreciation recapture ────────────────────────────
+# Equipment throughout: cost $100,000, depreciation taken $60,000, adjusted basis
+# $40,000. What changes between the cases is the sale price.
+
+def test_1245_recapture_is_capped_at_the_gain():
+    """Sold for $90,000 — the $50,000 gain is entirely depreciation coming back, so all
+    of it is ordinary and nothing survives as §1231."""
+    r = calc_4797_recapture(sale_price=90_000, basis=100_000, depreciation=60_000)
+    assert r["adj_basis"] == 40_000
+    assert r["gain"] == 50_000
+    assert r["recapture"] == 50_000
+    assert r["sec1231"] == 0
+
+
+def test_1245_recapture_is_capped_at_depreciation_so_appreciation_stays_1231():
+    """Sold for $120,000 — above original cost. Recapture stops at the $60,000 actually
+    depreciated; the $20,000 by which the price exceeds cost is real appreciation and
+    keeps §1231 character."""
+    r = calc_4797_recapture(sale_price=120_000, basis=100_000, depreciation=60_000)
+    assert r["gain"] == 80_000
+    assert r["recapture"] == 60_000
+    assert r["sec1231"] == 20_000
+    assert r["sec1231"] == 120_000 - 100_000, "the §1231 slice is the gain above cost"
+
+
+def test_1245_loss_produces_no_recapture():
+    """Sold for $30,000, below adjusted basis. There is no gain, so nothing to recapture;
+    the loss is §1231."""
+    r = calc_4797_recapture(sale_price=30_000, basis=100_000, depreciation=60_000)
+    assert r["gain"] == -10_000
+    assert r["recapture"] == 0
+    assert r["sec1231"] == -10_000
+
+
+def test_291_corporate_real_property_recaptures_twenty_percent():
+    """§291(a)(1). A building at $1,000,000 cost with $200,000 of straight-line
+    depreciation, sold for $1,100,000. Straight line leaves nothing for §1250 itself, but
+    a corporation still recaptures 20% of the $200,000 §1245 would have taken."""
+    r = calc_4797_recapture(sale_price=1_100_000, basis=1_000_000,
+                            depreciation=200_000, is_1245=False)
+    assert r["gain"] == 300_000
+    assert r["recapture"] == 40_000
+    assert r["sec1231"] == 260_000
+
+    as_1245 = calc_4797_recapture(1_100_000, 1_000_000, 200_000, is_1245=True)
+    assert r["recapture"] == pytest.approx(0.20 * as_1245["recapture"])
+
+
+# ── §1231(c) — five-year look-back ───────────────────────────────────────────
+
+def test_1231_lookback_recharacterises_gain_up_to_the_unrecaptured_pool():
+    """A $100,000 net §1231 gain against $80,000 of unrecaptured prior losses: $80,000
+    turns ordinary and only the $20,000 excess reaches Schedule D as a capital gain."""
+    r = calc_1231_lookback(100_000, [(2021, 30_000, 0), (2023, 50_000, 0)])
+    assert r["line8"] == 80_000
+    assert r["line9"] == 20_000
+    assert r["line12"] == 80_000
+    assert r["schedule_d_ltcg"] == 20_000
+    assert [x["used"] for x in r["rows"]] == [30_000, 50_000]
+
+
+def test_1231_lookback_consumes_the_oldest_loss_first():
+    """A $60,000 gain cannot absorb the whole $80,000 pool, so all of it is ordinary and
+    nothing reaches Schedule D. The 2021 loss clears before 2023 is touched — it is the
+    one about to fall out of the five-year window."""
+    r = calc_1231_lookback(60_000, [(2021, 30_000, 0), (2023, 50_000, 0)])
+    assert r["line9"] == 0
+    assert r["line12"] == 60_000
+    assert r["schedule_d_ltcg"] == 0
+    assert [x["used"] for x in r["rows"]] == [30_000, 30_000]
+
+
+def test_1231_net_loss_is_ordinary_and_does_not_run_the_lookback():
+    """The asymmetry §1231(c) exists to police: a net loss is ordinary in full, and the
+    look-back does not consume the pool — this year's loss will join it."""
+    r = calc_1231_lookback(-40_000, [(2021, 30_000, 0)])
+    assert r["line11"] == -40_000
+    assert r["line12"] == 0
+    assert r["schedule_d_ltcg"] == 0
+    assert [x["used"] for x in r["rows"]] == [0.0]
+
+
+def test_1231_already_recaptured_losses_leave_the_pool():
+    """A loss recaptured in an earlier year cannot be recaptured again."""
+    r = calc_1231_lookback(100_000, [(2021, 50_000, 50_000), (2023, 20_000, 5_000)])
+    assert r["pool"] == 15_000
+    assert r["schedule_d_ltcg"] == 85_000
+
+
+def test_1231_gain_with_no_prior_losses_is_entirely_capital():
+    r = calc_1231_lookback(100_000, [])
+    assert r["line12"] == 0
+    assert r["schedule_d_ltcg"] == 100_000
+
+
+# ── §263A — absorption ratio behaviour ───────────────────────────────────────
+
+def test_263a_absorbs_the_whole_pool_when_all_inventory_is_sold():
+    """Ratio of 1.0: nothing is left in ending inventory, so every capitalised cost has
+    followed the goods out and is deductible now."""
+    assert calc_unicap(100_000, cogs=1_000_000, total_inventory_costs=1_000_000) == 100_000
+
+
+def test_263a_absorbs_nothing_in_a_pure_inventory_build():
+    """Ratio of 0.0 is legitimate: a year that produces and sells nothing capitalises the
+    entire pool into ending inventory, and it stays there until the goods sell."""
+    assert calc_unicap(100_000, cogs=0, total_inventory_costs=1_000_000) == 0.0
 
 
 # ── calculate_1120 — the whole return ────────────────────────────────────────

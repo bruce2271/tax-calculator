@@ -136,6 +136,69 @@ def calc_charitable(contribution: float, taxable_income_before_charitable: float
     return {"deductible": deductible, "carryforward_5yr": carryforward, "limit": limit}
 
 
+# ── Form 4797 — depreciation recapture and the §1231 look-back ───────────────
+
+def calc_4797_recapture(sale_price: float, basis: float, depreciation: float,
+                        is_1245: bool = True) -> dict:
+    """Form 4797 Part III. Recapture converts part of the gain from §1231 (capital
+    treatment if it survives the look-back) into ordinary income.
+
+    §1245 personal property recaptures the depreciation actually taken, capped at the
+    gain — so gain above original cost stays §1231 and is never recaptured.
+
+    §1250 real property held by a *corporation* is different. Straight-line depreciation
+    leaves no additional depreciation for §1250 itself, but §291(a)(1) still recaptures
+    20% of what §1245 would have taken. That 20% is a corporate-only rule; an individual
+    selling the same building recaptures nothing here."""
+    adj_basis = basis - depreciation
+    gain = sale_price - adj_basis
+    if gain <= 0:
+        recapture = 0.0
+    elif is_1245:
+        recapture = min(gain, depreciation)
+    else:
+        recapture = 0.20 * min(gain, depreciation)
+    return {"adj_basis": adj_basis, "gain": gain,
+            "recapture": recapture, "sec1231": gain - recapture}
+
+
+def calc_1231_lookback(net_1231: float, prior_losses) -> dict:
+    """§1231(c). A net §1231 gain is ordinary income to the extent of net §1231 losses
+    deducted in the five preceding years that have not already been recaptured.
+
+    The asymmetry is the point of the section: a net §1231 loss is fully ordinary, while
+    a net gain is capital. Without the look-back a taxpayer could alternate loss and gain
+    years and take an ordinary deduction against a capital gain every time.
+
+    `prior_losses` is an iterable of (year, loss, already_recaptured), oldest first.
+    Line numbers below are Form 4797 Part I."""
+    rows, pool = [], 0.0
+    for year, loss, prior in prior_losses:
+        avail = max(0.0, loss - prior)
+        rows.append({"year": year, "loss": loss, "prior": prior,
+                     "avail": avail, "used": 0.0})
+        pool += avail
+
+    if net_1231 <= 0:
+        # A net loss is ordinary in full and leaves the look-back pool alone — it will
+        # instead join the pool for the next five years.
+        return {"pool": pool, "line8": 0.0, "line9": 0.0, "line11": net_1231,
+                "line12": 0.0, "schedule_d_ltcg": 0.0, "rows": rows}
+
+    line8 = pool
+    remaining = net_1231
+    for r in rows:                      # oldest first, so the oldest losses clear first
+        r["used"] = min(r["avail"], remaining)
+        remaining -= r["used"]
+    line9 = max(0.0, net_1231 - line8)
+    if line9 == 0:
+        line12, schedule_d = net_1231, 0.0      # the whole gain is recaptured as ordinary
+    else:
+        line12, schedule_d = line8, line9       # pool ordinary, the excess is a LTCG
+    return {"pool": pool, "line8": line8, "line9": line9, "line11": 0.0,
+            "line12": line12, "schedule_d_ltcg": schedule_d, "rows": rows}
+
+
 # ── Capital Gains / Losses ────────────────────────────────────────────────────
 
 def calc_drd_246b(divs: float, ownership_pct: float,
