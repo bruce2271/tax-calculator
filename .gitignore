@@ -33,3 +33,6 @@ Thumbs.db
 
 # ── Working notes ────────────────────────────────────────────────────────────
 scratch_*.txt
+
+# Example scenarios are public 10-K figures, not taxpayer data — keep them tracked.
+!examples/*.json

@@ -205,6 +205,10 @@ uncertain tax position are ASC 740 constructs about *recognising* tax in financi
 statements; neither exists anywhere on a tax return, so a return model should not produce
 them.
 
+The scenario is saved at [`examples/winnebago-fy2024.json`](examples/winnebago-fy2024.json)
+— load it from the sidebar under **Save / Load** to reproduce the table above. The file
+carries the derivation of each figure from the published rate lines in a comment.
+
 Keying these figures in is also what surfaced the §170 loss-year bug now pinned in the
 test suite.
 

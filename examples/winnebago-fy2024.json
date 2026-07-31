@@ -1,0 +1,38 @@
+{
+  "app": "form-1120-calculator",
+  "schema": 1,
+  "tax_year": 2024,
+  "saved_at": "2026-07-30T00:00:00",
+  "closed_years": [],
+  "_comment": [
+    "Winnebago Industries, FY2024 (year ended 31 August 2024), from their 10-K income",
+    "tax footnote. Public disclosure only — no taxpayer data. Amounts in whole dollars.",
+    "",
+    "Their reconciliation runs 21.0% statutory to 66.2% effective. Each rate line grossed",
+    "up at 21% against pretax income of $38.37M ($25.4M provision / 66.2%) gives the",
+    "dollar difference behind it:",
+    "  §162(m) non-deductible compensation   6.6%  ->  $12.06M",
+    "  non-deductible debt inducement       19.4%  ->  $35.45M",
+    "  non-deductible goodwill impairment   16.6%  ->  $30.33M",
+    "                                              = $77.84M, entered as other_perm_book",
+    "  tax-free and dividend income         -1.1%  ->   $2.01M, entered as the §103",
+    "                                                   exclusion against interest income",
+    "  income tax credits                   -8.9%  ->   $3.42M",
+    "",
+    "Expected: book income $38,370,000; line 28 $114,200,000; tax at 21% $23,982,000;",
+    "after credits $20,562,000. That reconciles to their federal provision of $22.18M",
+    "($25.40M total less $3.22M state) once the valuation allowance (+$1.92M), uncertain",
+    "tax positions (-$0.65M) and other (+$0.35M) are added back — all three are ASC 740",
+    "recognition constructs with no place on a return."
+  ],
+  "state": {
+    "tax_year": 2024,
+    "active_form": "📋 Form 1120",
+    "gross_receipts_book": 114200000.0,
+    "interest_income_book": 2010000.0,
+    "interest_income_adj": 2010000.0,
+    "other_perm_book": 77840000.0,
+    "other_credits": 3420000.0,
+    "total_assets": 50000000.0
+  }
+}
