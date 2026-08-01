@@ -13,12 +13,16 @@ import pytest
 
 from calculators.form_1120 import (
     calc_163j,
+    calc_280c,
     calc_1231_lookback,
     calc_4797_recapture,
     calc_capital,
     calc_charitable,
     calc_drd_246b,
+    calc_gbc_limitation,
+    calc_general_business_credit,
     calc_nol,
+    calc_rd_credit_regular,
     calc_unicap,
     calculate_1120,
 )
@@ -326,6 +330,102 @@ def test_263a_absorbs_nothing_in_a_pure_inventory_build():
     """Ratio of 0.0 is legitimate: a year that produces and sells nothing capitalises the
     entire pool into ending inventory, and it stays there until the goods sell."""
     assert calc_unicap(100_000, cogs=0, total_inventory_costs=1_000_000) == 0.0
+
+
+# ── §38 / §39 — the general business credit ──────────────────────────────────
+
+def test_38c_limit_is_regular_tax_less_25_percent_of_the_excess_over_25000():
+    """§38(c)(1). A credit cannot take the bill to zero. On $100,000 of regular tax the
+    floor is 25% x ($100,000 - $25,000) = $18,750, so at most $81,250 can be used."""
+    r = calc_gbc_limitation(regular_tax=100_000)
+    assert r["floor"] == 18_750
+    assert r["limit"] == 81_250
+
+
+def test_38c_small_corporation_below_25000_is_not_limited_at_all():
+    """The $25,000 threshold exempts small filers — the whole tax can be credited away."""
+    r = calc_gbc_limitation(regular_tax=25_000)
+    assert r["floor"] == 0
+    assert r["limit"] == 25_000
+
+
+def test_38c_tentative_minimum_tax_binds_when_it_is_the_greater_floor():
+    """The floor is the *greater* of the two. Corporate AMT is repealed and CAMT reaches
+    only filers above $1B of book income, so this branch is rare — but it is the statute."""
+    r = calc_gbc_limitation(regular_tax=100_000, tentative_minimum_tax=40_000)
+    assert r["floor"] == 40_000
+    assert r["limit"] == 60_000
+    assert r["tmt_binding"] is True
+
+
+def test_38a_carryforwards_are_used_before_the_current_year_oldest_first():
+    """§38(a). Vintages carried in go first, oldest first, because §39 gives each only
+    twenty years. Limit is $81,250 against $30,000 + $60,000 of carryforward and $50,000
+    earned this year: 2019 goes entirely, 2021 gives $51,250, this year gets nothing."""
+    r = calc_general_business_credit(
+        current_year_credit=50_000, regular_tax=100_000,
+        carryforwards=[(2019, 30_000), (2021, 60_000)], current_year=2024)
+    assert r["limit"] == 81_250
+    assert [x["used"] for x in r["carryforward_rows"]] == [30_000, 51_250]
+    assert r["current_used"] == 0
+    assert r["total_used"] == 81_250
+    assert r["current_unused"] == 50_000
+
+
+def test_39_vintages_expire_after_twenty_years():
+    """§39(a). A 2003 credit is dead by 2024 and cannot be used however much room exists."""
+    r = calc_general_business_credit(
+        current_year_credit=0, regular_tax=1_000_000,
+        carryforwards=[(2003, 40_000), (2020, 10_000)], current_year=2024)
+    assert r["carryforward_rows"][0]["expired"] is True
+    assert r["carryforward_rows"][0]["used"] == 0
+    assert r["carryforward_rows"][1]["used"] == 10_000
+    assert r["expired"] == 40_000
+
+
+def test_39_unused_current_year_credit_survives_as_a_carryforward():
+    r = calc_general_business_credit(current_year_credit=100_000, regular_tax=50_000)
+    assert r["limit"] == 43_750          # 50,000 - 25% x 25,000
+    assert r["current_used"] == 43_750
+    assert r["current_unused"] == 56_250
+
+
+# ── §280C(c) and the §41 base floor ──────────────────────────────────────────
+
+def test_280c_reduced_credit_election_is_79_percent():
+    """§280C(c)(3). The reduced credit is the gross credit times one minus the 21% rate,
+    so electing it leaves the same after-tax result as cutting the §174 amount instead."""
+    elected = calc_280c(100_000, elect_reduced=True)
+    assert elected["credit"] == 79_000
+    assert elected["sec174_reduction"] == 0
+
+    full = calc_280c(100_000, elect_reduced=False)
+    assert full["credit"] == 100_000
+    assert full["sec174_reduction"] == 100_000
+
+
+def test_41_base_amount_floors_at_half_of_current_spending():
+    """REGRESSION. §41(c)(2) puts a floor under the base amount at 50% of current QRE.
+    Without it a filer with small historic receipts computed a tiny base and claimed 20%
+    of nearly everything spent, which is not an incremental credit.
+
+    $1,000,000 of research against a 3% fixed base on $2,000,000 of receipts gives a
+    computed base of $60,000 — but the floor of $500,000 governs, so the credit is
+    $100,000 rather than $188,000."""
+    r = calc_rd_credit_regular(current_qre=1_000_000, fixed_base_pct=0.03,
+                               avg_gross_receipts=2_000_000)
+    assert r["computed_base"] == 60_000
+    assert r["base_amount"] == 500_000
+    assert r["floor_binding"] is True
+    assert r["credit"] == 100_000
+
+
+def test_41_floor_does_not_bind_when_the_computed_base_is_larger():
+    r = calc_rd_credit_regular(current_qre=1_000_000, fixed_base_pct=0.10,
+                               avg_gross_receipts=8_000_000)
+    assert r["base_amount"] == 800_000
+    assert r["floor_binding"] is False
+    assert r["credit"] == 40_000
 
 
 # ── calculate_1120 — the whole return ────────────────────────────────────────

@@ -29,6 +29,7 @@ book-tax reconciliations, and the return itself are derived from them.
 | **§263A UNICAP** | Percentage allocation across lines 12, 13, 14, 16, 17 and 20 into the inventory pool |
 | **§163(j)** | 30%-of-ATI limitation with indefinite carryforward and the §448(c) small-business exemption |
 | **§162(m), §274(n), §162(f)/(e)/(c), §276, §264, §267(a)(2), §170** | Disallowances and deferrals wired into both reconciliations |
+| **Credits** | §41 research computed both ways with the §41(c)(2) base floor, the §280C(c) reduced-credit election, the §38(c) ceiling and §39 twenty-year carryforwards |
 | **§174, §197, ASC 718, ASC 842** | The timing items that dominate real filings: research capitalised and amortised over 5 years, 15-year intangible amortisation, stock compensation, and leases |
 | **Year-end close** | Explicit rollforward that writes every carryforward, clears current-year amounts, advances the tax year, and refuses to run twice |
 | **Persistence** | Save / load the whole return as JSON, carryforwards and closed-year history included |

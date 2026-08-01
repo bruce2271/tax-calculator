@@ -265,11 +265,100 @@ def calc_rd_credit_asc(current_qre: float, avg_prior_3yr_qre: float) -> dict:
 
 def calc_rd_credit_regular(current_qre: float, fixed_base_pct: float,
                             avg_gross_receipts: float) -> dict:
+    """§41(a)(1). 20% of qualified research spending above a base amount.
+
+    §41(c)(2) puts a floor under that base: it can never be less than half of the
+    current year's spending. Without the floor a company with small historic receipts
+    would compute a tiny base and claim 20% of nearly everything it spent, which is not
+    what an *incremental* credit is for."""
     fixed_base_pct = min(max(fixed_base_pct, 0.03), 0.16)
-    base_amount = fixed_base_pct * avg_gross_receipts
+    computed_base = fixed_base_pct * avg_gross_receipts
+    floor = 0.50 * current_qre
+    base_amount = max(computed_base, floor)
     credit = max(0, current_qre - base_amount) * 0.20
     return {"credit": credit, "base_amount": base_amount,
+            "computed_base": computed_base, "floor": floor,
+            "floor_binding": floor > computed_base,
             "fixed_base_pct": fixed_base_pct}
+
+
+def calc_280c(gross_credit: float, elect_reduced: bool = True,
+              tax_rate: float = 0.21) -> dict:
+    """§280C(c). The same research spending cannot both earn a credit and be deducted
+    in full — that would subsidise it twice. Two ways to settle up:
+
+      * reduce the amount capitalised under §174 by the credit, keeping the full credit
+      * elect the reduced credit, which is the gross credit times (1 - 21%)
+
+    The 79% is one minus the corporate rate, chosen so the two routes leave the same
+    after-tax result and the election is genuinely neutral. Most filers elect it because
+    it keeps the §174 pool untouched."""
+    if elect_reduced:
+        return {"credit": gross_credit * (1 - tax_rate),
+                "sec174_reduction": 0.0, "elected": True,
+                "note": f"Reduced credit elected — {1 - tax_rate:.0%} of the gross credit"}
+    return {"credit": gross_credit, "sec174_reduction": gross_credit, "elected": False,
+            "note": "Full credit taken; the §174 capitalised amount is reduced by it"}
+
+
+def calc_gbc_limitation(regular_tax: float,
+                        tentative_minimum_tax: float = 0.0) -> dict:
+    """§38(c)(1). The general business credit cannot wipe out a tax bill entirely.
+
+    It is capped at net income tax less the greater of the tentative minimum tax or 25%
+    of regular tax above $25,000. Corporate AMT was repealed for 2018 onward and the
+    replacement CAMT only reaches filers above $1B of book income, so for almost every
+    corporation the tentative minimum tax is zero and the 25% rule binds.
+
+    The $25,000 threshold means a small corporation is not limited at all."""
+    twenty_five_pct_rule = 0.25 * max(0.0, regular_tax - 25_000)
+    floor = max(tentative_minimum_tax, twenty_five_pct_rule)
+    return {"limit": max(0.0, regular_tax - floor), "floor": floor,
+            "twenty_five_pct_rule": twenty_five_pct_rule,
+            "tmt_binding": tentative_minimum_tax > twenty_five_pct_rule}
+
+
+def calc_general_business_credit(current_year_credit: float, regular_tax: float,
+                                 carryforwards=(), tentative_minimum_tax: float = 0.0,
+                                 current_year: int = 0) -> dict:
+    """§38 and §39. Applies the §38(c) limit to the pool of available credits and splits
+    what is left into carryforwards.
+
+    §38(a) sets the order: amounts carried forward into this year are used first, oldest
+    first, then the current year's credit. Using the oldest first matters because §39
+    gives each vintage only twenty years before it expires unused.
+
+    `carryforwards` is an iterable of (year, amount), oldest first.
+    """
+    lim = calc_gbc_limitation(regular_tax, tentative_minimum_tax)
+    remaining = lim["limit"]
+
+    rows = []
+    for year, amount in carryforwards:
+        expires_after = year + 20
+        expired = current_year and expires_after < current_year
+        available = 0.0 if expired else amount
+        used = min(available, remaining)
+        remaining -= used
+        rows.append({"year": year, "amount": amount, "expired": bool(expired),
+                     "expires_after": expires_after, "used": used,
+                     "remaining": amount - used})
+
+    current_used = min(current_year_credit, remaining)
+    total_used = sum(r["used"] for r in rows) + current_used
+    return {
+        "limit": lim["limit"], "floor": lim["floor"],
+        "tmt_binding": lim["tmt_binding"],
+        "carryforward_rows": rows,
+        "carryforward_used": sum(r["used"] for r in rows),
+        "current_used": current_used,
+        "total_used": total_used,
+        # §39: one year back, twenty forward. Unused current-year credit becomes this
+        # year's vintage; unused prior vintages keep their own clocks.
+        "current_unused": current_year_credit - current_used,
+        "prior_unused": sum(r["remaining"] for r in rows if not r["expired"]),
+        "expired": sum(r["amount"] for r in rows if r["expired"]),
+    }
 
 
 # ── NOL ───────────────────────────────────────────────────────────────────────
@@ -489,11 +578,25 @@ def calculate_1120(inputs: dict) -> dict:
     rd_regular = calc_rd_credit_regular(inputs.get("current_qre", 0),
                                          inputs.get("fixed_base_pct", 0.03),
                                          inputs.get("avg_gross_receipts", gross_revenue))
-    rd_credit = max(rd_asc["credit"], rd_regular["credit"])
+    # §41 gives the larger of the two methods; §280C(c) then settles the overlap with
+    # the §174 deduction before the credit joins the general business credit pool.
+    rd_gross = max(rd_asc["credit"], rd_regular["credit"])
+    sec280c = calc_280c(rd_gross, inputs.get("elect_reduced_credit", True))
+    rd_credit = sec280c["credit"]
+
+    # The foreign tax credit is not part of the general business credit — §901 is its
+    # own regime with its own §904 limitation — and it is applied first, so the §38(c)
+    # ceiling is measured against what is left.
     ftc = inputs.get("foreign_tax_credit", 0)
     other_credits = inputs.get("other_credits", 0)
-    total_credits = min(rd_credit + ftc + other_credits, regular_tax)
+    gbc_base = max(0.0, regular_tax - ftc)
+    gbc = calc_general_business_credit(
+        rd_credit + other_credits, gbc_base,
+        carryforwards=inputs.get("gbc_carryforwards", ()),
+        tentative_minimum_tax=inputs.get("tentative_minimum_tax", 0.0),
+        current_year=inputs.get("tax_year", 0))
 
+    total_credits = min(ftc, regular_tax) + gbc["total_used"]
     tax_after_credits = regular_tax - total_credits
 
     # CAMT
@@ -575,7 +678,10 @@ def calculate_1120(inputs: dict) -> dict:
                 "rd_asc": rd_asc,
                 "rd_regular": rd_regular,
                 "rd_credit_used": rd_credit,
+                "rd_credit_gross": rd_gross,
+                "sec280c": sec280c,
                 "foreign_tax_credit": ftc,
+                "general_business_credit": gbc,
                 "total_credits": total_credits,
             },
             "tax_after_credits": tax_after_credits,

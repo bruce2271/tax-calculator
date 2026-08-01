@@ -298,6 +298,7 @@ DEFAULTS = {
     "fixed_base_pct": 3,
     "avg_gross_receipts_rd": 0.0,
     "ftc": 0.0, "other_credits": 0.0,
+    "elect_reduced_credit": True, "gbc_n": 1, "tentative_min_tax": 0.0,
     # CAMT / BEAT
     "afsi": 0.0, "avg_afsi_3yr": 0.0,
     "avg_gross_receipts_3yr": 0.0,
@@ -381,14 +382,15 @@ STANDING_KEYS = {
     "has_cfc", "sf_owner_pct", "g_owner_pct", "gilti_regime",
     "dep_method", "macrs_life", "year_placed", "macrs_month", "fixed_base_pct",
     "avg_prior_3yr_qre", "avg_gross_receipts_rd", "avg_afsi_3yr", "avg_gross_receipts_3yr",
-    "nol_n", "interest_cf_prior", "cc_cf_prior", "prior_year_tax", "prior_overpayment",
+    "nol_n", "gbc_n", "elect_reduced_credit", "interest_cf_prior", "cc_cf_prior", "prior_year_tax", "prior_overpayment",
     "ati_override", "f4797_n_props", "roll_confirm", "roll_credit_overpay",
     "s267_accrual",
     "theme_font", "theme_font_name", "theme_size",
 } | set(THEME_DEFAULTS)
 # Prefixes whose keys hold prior-year history and must never be zeroed.
 KEEP_PREFIXES = ("sd_cf_loss_", "f4797_lb_loss_", "f4797_lb_recap_",
-                 "f4797_desc_", "f4797_type_", "nol_year_", "nol_amt_")
+                 "f4797_desc_", "f4797_type_", "nol_year_", "nol_amt_",
+                 "gbc_year_", "gbc_amt_")
 # Prefixes of current-year amount fields that are not declared in DEFAULTS.
 # "sf_" and "g_" cover the Subpart F and GILTI/NCTI calculators; their ownership
 # percentages are listed in STANDING_KEYS and so are skipped before this is reached.
@@ -444,6 +446,17 @@ if _rp:
             if int(st.session_state.get(f"nol_year_{_j}", 0)) == _y:
                 _k = f"nol_amt_{_j}"
                 st.session_state[_k] = max(0.0, st.session_state.get(_k, 0.0) - _u)
+    for _y, _u in _rp["gbc_used"]:                       # §39 vintages drawn down
+        for _j in range(int(st.session_state.get("gbc_n", 1))):
+            if int(st.session_state.get(f"gbc_year_{_j}", 0)) == _y:
+                _k = f"gbc_amt_{_j}"
+                st.session_state[_k] = max(0.0, st.session_state.get(_k, 0.0) - _u)
+    if _rp["gbc_new"] > 0:                               # unused credit becomes a vintage
+        _slot = int(st.session_state.get("gbc_n", 1))
+        st.session_state["gbc_n"] = _slot + 1
+        st.session_state[f"gbc_year_{_slot}"] = _cy_r
+        st.session_state[f"gbc_amt_{_slot}"] = _rp["gbc_new"]
+
     if _rp["nol_new"] > 0:                               # this year's loss becomes a tranche
         _slot = int(st.session_state.get("nol_n", 1))
         st.session_state["nol_n"] = _slot + 1
@@ -743,6 +756,10 @@ def build_1120_inputs(dividends_and_inclusions, special_deductions, nol_carryfor
             "fixed_base_pct": s.fixed_base_pct / 100,
             "avg_gross_receipts": s.avg_gross_receipts_rd if s.avg_gross_receipts_rd > 0 else max(s.gross_receipts_book, 1),
             "foreign_tax_credit": s.ftc,
+            "elect_reduced_credit": s.get("elect_reduced_credit", True),
+            "gbc_carryforwards": GBC_CF,
+            "tentative_minimum_tax": s.get("tentative_min_tax", 0.0),
+            "tax_year": int(s.get("tax_year", 2025)),
             "other_credits": s.other_credits,
             "afsi": s.afsi,
             "avg_afsi_3yr": s.avg_afsi_3yr,
@@ -885,6 +902,20 @@ SEC448_THRESHOLD = {2018: 25_000_000.0, 2019: 26_000_000.0, 2020: 26_000_000.0,
 
 def sec448_threshold(year):
     return SEC448_THRESHOLD.get(int(year), max(SEC448_THRESHOLD.values()))
+
+
+def gbc_vintages():
+    """§39 general business credit carryforwards, by the year the credit arose. Twenty
+    years each and used oldest first — the same shape as the §172 and §1212 pools."""
+    s = st.session_state
+    cy = int(s.get("tax_year", 2025))
+    rows = []
+    for i in range(int(s.get("gbc_n", 1))):
+        s.setdefault(f"gbc_year_{i}", cy - 1)
+        s.setdefault(f"gbc_amt_{i}", 0.0)
+        rows.append((int(s[f"gbc_year_{i}"]), s[f"gbc_amt_{i}"]))
+    rows.sort(key=lambda r: r[0])
+    return rows
 
 
 def nol_vintages():
@@ -1044,6 +1075,7 @@ def schedule_c_totals():
             "line23": line23,
             "line24": drd["allowed"] + sec250}           # column (c) — special deductions
 
+GBC_CF = gbc_vintages()
 MODERN = modern_diffs()
 F1125A = form_1125a_base()
 S263A = sec263a_status()
@@ -1358,9 +1390,13 @@ def return_checks():
             f"Net income per books ${M1['l1']:,.0f} — derived from the Book / AFS columns"),
         chk("Taxable income is populated", 1.0 if abs(l28) > 0.5 else 0.0, 1.0,
             f"Form 1120 line 28 ${l28:,.0f}"),
-        chk("Book-tax differences are computed",
-            1.0 if (abs(M3["temp"]) + abs(M3["perm"])) > 0.5 else 0.0, 1.0,
-            f"Temporary ${M3['temp']:+,.0f}, permanent ${M3['perm']:+,.0f}"),
+        # Assert the reconciliation identity rather than that differences exist. A
+        # corporation with none is unusual but perfectly valid, and demanding a non-zero
+        # figure reported a failure on a return that was in fact consistent.
+        chk("Book income plus the differences equals line 28",
+            M3["l1"] + M3["temp"] + M3["perm"], l28,
+            f"Book ${M3['l1']:,.0f} + temporary ${M3['temp']:+,.0f} "
+            f"+ permanent ${M3['perm']:+,.0f}"),
         chk("Schedule M-1 line 10 = Form 1120 line 28", M1["l10"], l28,
             f"M-1 ${M1['l10']:,.0f} vs line 28 ${l28:,.0f}", active=(required == "M-1")),
         chk("Schedule M-3 Part II line 30 (d) = Form 1120 line 28", M3["l30"], l28,
@@ -3678,8 +3714,8 @@ elif section == "🧮 Schedule J — Tax Computation":
     _sj_l3 = R1120["tax"]["beat"]["beat"]
     _sj_l4 = _sj_l2 + _sj_l3
     _sj_l5a = st.session_state.get("ftc", 0.0)
-    _sj_l5c = (R1120["tax"]["credits"]["rd_credit_used"]
-               + st.session_state.get("other_credits", 0.0))
+    _sj_gbc = R1120["tax"]["credits"]["general_business_credit"]
+    _sj_l5c = _sj_gbc["total_used"]          # §38(c) limited, §38(a) ordered
     _sj_l5d = st.session_state.get("camt_credit_prior", 0.0)
     _sj_l6 = _sj_l5a + _sj_l5c + _sj_l5d
     _sj_l7 = max(0.0, _sj_l4 - _sj_l6)
@@ -3821,10 +3857,108 @@ elif section == "🧮 Schedule J — Tax Computation":
             "§280C(c): Claiming the §41 credit reduces the QRE deduction by the credit amount. An election to take a reduced credit instead is available on Form 6765.",
         ])
 
+        st.markdown("## §280C(c) — the credit or the deduction, not both")
+        st.checkbox("Elect the reduced credit (Form 6765) — 79% of the gross credit",
+                    key="elect_reduced_credit")
+        _c280 = R1120["tax"]["credits"]["sec280c"]
+        _rd_gross = R1120["tax"]["credits"]["rd_credit_gross"]
+        _c280_extra = ("" if _c280["elected"] else
+                       f", §174 capitalised amount reduced by ${_c280['sec174_reduction']:,.0f}")
+        st.markdown(
+            f"<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            f"margin:6px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            f"Gross §41 credit <b>${_rd_gross:,.0f}</b> → credit claimed "
+            f"<b>${_c280['credit']:,.0f}</b>{_c280_extra}"
+            f"<br>{_c280['note']}</div>", unsafe_allow_html=True)
+        irc([
+            "<b>§280C(c):</b> the same research spending cannot both earn a credit and be "
+            "deducted in full — that would subsidise it twice. Either the amount capitalised "
+            "under §174 is reduced by the credit, or the corporation elects a reduced credit.",
+            "<b>Why 79%?</b> One minus the 21% corporate rate. At that figure the two routes "
+            "leave the same after-tax result, so the election is genuinely neutral rather "
+            "than a trap. Most filers elect it because it leaves the §174 pool alone.",
+        ])
+
+        st.markdown("## §38(c) — the general business credit ceiling")
+        st.number_input("Tentative minimum tax (CAMT — usually 0) ($)", min_value=0.0,
+                        step=1_000.0, format="%.2f", key="tentative_min_tax")
+        _g = R1120["tax"]["credits"]["general_business_credit"]
+        _reg = R1120["tax"]["regular_tax"]
+        st.markdown(
+            f"<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse'>"
+            f"<tr style='background:#EBF4FF'><th style='padding:6px 8px;text-align:left;color:#1B3A6B'>Step</th>"
+            f"<th style='padding:6px 8px;text-align:right;color:#1B3A6B'>Amount</th></tr>"
+            f"<tr><td style='padding:5px 8px'>Regular tax, less the foreign tax credit</td>"
+            f"<td style='padding:5px 8px;text-align:right'>${max(0.0, _reg - st.session_state.get('ftc', 0.0)):,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>Less the floor — greater of tentative minimum tax "
+            f"or 25% of the excess over $25,000</td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_g['floor']:,.0f})</td></tr>"
+            f"<tr style='font-weight:700'><td style='padding:5px 8px'>Maximum credit usable this year</td>"
+            f"<td style='padding:5px 8px;text-align:right'>${_g['limit']:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>Carryforwards used (oldest first)</td>"
+            f"<td style='padding:5px 8px;text-align:right'>${_g['carryforward_used']:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>Current year credit used</td>"
+            f"<td style='padding:5px 8px;text-align:right'>${_g['current_used']:,.0f}</td></tr>"
+            f"<tr style='font-weight:700;background:#eef2f7'><td style='padding:5px 8px'>Schedule J line 5c</td>"
+            f"<td style='padding:5px 8px;text-align:right'>${_g['total_used']:,.0f}</td></tr>"
+            f"</table></div>", unsafe_allow_html=True)
+        irc([
+            "<b>§38(c)(1):</b> the general business credit is capped at net income tax less the "
+            "greater of the tentative minimum tax or <b>25% of regular tax above $25,000</b>. "
+            "A corporation with taxable income cannot credit its way to zero.",
+            "The <b>$25,000 threshold</b> means a small corporation is not limited at all — the "
+            "whole liability can be offset.",
+            "Corporate AMT was repealed for years after 2017 and the CAMT that replaced it "
+            "reaches only filers above $1B of adjusted financial statement income, so for "
+            "almost every corporation the tentative minimum tax is zero and the 25% rule binds.",
+            "<b>§38(a) ordering:</b> carryforwards into the year are used first, oldest first, "
+            "then the current year's credit. Oldest first matters because §39 gives each "
+            "vintage only twenty years.",
+        ])
+
+        st.markdown("### §39 — carryforward vintages")
+        st.number_input("Number of credit vintages to track", min_value=0, max_value=8,
+                        step=1, key="gbc_n")
+        _cy_gbc = int(st.session_state.get("tax_year", 2025))
+        for _i in range(int(st.session_state.get("gbc_n", 1))):
+            _gc1, _gc2, _gc3 = st.columns([1, 1.4, 2])
+            _gc1.number_input("Credit year", min_value=1998, max_value=_cy_gbc - 1,
+                              step=1, key=f"gbc_year_{_i}")
+            _gc2.number_input("Unused credit carried in ($)", min_value=0.0, step=1_000.0,
+                              format="%.2f", key=f"gbc_amt_{_i}")
+            _row = next((r for r in _g["carryforward_rows"]
+                         if r["year"] == int(st.session_state.get(f"gbc_year_{_i}", 0))), None)
+            with _gc3:
+                if _row is None:
+                    st.write("")
+                elif _row["expired"]:
+                    st.markdown(
+                        f"<div style='background:#FDECEA;border-left:4px solid #C53030;padding:8px 12px;"
+                        f"margin-top:28px;color:#7A1C1C;-webkit-text-fill-color:#7A1C1C;'>"
+                        f"<b>EXPIRED</b> after {_row['expires_after']} — the 20-year window "
+                        f"under §39 has closed.</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f"<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:8px 12px;"
+                        f"margin-top:28px;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+                        f"Used this year <b>${_row['used']:,.0f}</b>, remaining "
+                        f"${_row['remaining']:,.0f} — expires after {_row['expires_after']}."
+                        f"</div>", unsafe_allow_html=True)
+
+        _gk1, _gk2, _gk3 = st.columns(3)
+        _gk1.metric("Unused current-year credit", f"\\${_g['current_unused']:,.0f}")
+        _gk2.metric("Unused prior vintages", f"\\${_g['prior_unused']:,.0f}")
+        _gk3.metric("Expired unused", f"\\${_g['expired']:,.0f}")
+        st.caption("§39(a): unused credit carries back one year and forward twenty. "
+                   "Anything still unused at the end of the twentieth year is lost.")
+
         st.markdown("## Foreign Tax Credit & Other Credits")
         c1, c2 = st.columns(2)
         c1.number_input(L("5a", "Foreign Tax Credit — Form 1118"), min_value=0.0, step=1_000.0, format="%.2f", key="ftc")
         c2.number_input(L("5c", "Other General Business Credits — Form 3800"), min_value=0.0, step=1_000.0, format="%.2f", key="other_credits")
+        st.caption("The foreign tax credit is not part of the general business credit — §901 "
+                   "is its own regime with its own §904 limitation — and it is applied first, "
+                   "so the §38(c) ceiling is measured against what is left.")
         irc([
             "§901/§904 FTC (Foreign Tax Credit): Reduces U.S. tax on foreign-source income dollar-for-dollar, up to the U.S. tax on that income.",
             "<b>§904 Basket system:</b> FTC separated by income type — General basket, Passive basket, Foreign Branch basket, NCTI (Net CFC Tested Income) basket."
@@ -4349,9 +4483,13 @@ elif section == "📈 Results Summary":
 | Income Tax @ 21% | ${tx['regular_tax']:,.0f} |
 | §41 R&D Credit — ASC | (${cr['rd_asc']['credit']:,.0f}) |
 | §41 R&D Credit — Regular | (${cr['rd_regular']['credit']:,.0f}) |
-| R&D Credit Applied (higher) | (${cr['rd_credit_used']:,.0f}) |
+| §41 gross, higher method | (${cr['rd_credit_gross']:,.0f}) |
+| §280C(c) — credit claimed | (${cr['rd_credit_used']:,.0f}) |
+| Other general business credits | (${inputs['other_credits']:,.0f}) |
+| **§38(c) ceiling on the general business credit** | **${cr['general_business_credit']['limit']:,.0f}** |
+| General business credit allowed | (${cr['general_business_credit']['total_used']:,.0f}) |
+| Carried forward under §39 | ${cr['general_business_credit']['current_unused'] + cr['general_business_credit']['prior_unused']:,.0f} |
 | Foreign Tax Credit | (${cr['foreign_tax_credit']:,.0f}) |
-| Other Credits | (${inputs['other_credits']:,.0f}) |
 | Tax After Credits | ${tx['tax_after_credits']:,.0f} |
 | CAMT | ${tx['camt']['camt']:,.0f} |
 | BEAT | ${tx['beat']['beat']:,.0f} |
@@ -4479,6 +4617,9 @@ trail. Next session, *Load a saved return* picks up exactly where you left off.
     _roll_nol = r["taxable_income"]["nol"]["remaining_carryforward"] + r["taxable_income"]["nol"]["new_nol_generated"]
     _roll_nol_used = [(v["year"], v["used"]) for v in NOL["rows"] if v.get("used", 0) > 0]
     _roll_nol_new = r["taxable_income"]["nol"]["new_nol_generated"]
+    _rg = r["tax"]["credits"]["general_business_credit"]
+    _roll_gbc_used = [(x["year"], x["used"]) for x in _rg["carryforward_rows"] if x["used"] > 0]
+    _roll_gbc_new = _rg["current_unused"]
     _roll_163j = r["deductions"]["interest"]["excess_carryforward"]
     _roll_char = r["deductions"]["charitable"]["carryforward_5yr"]
     _roll_total_tax = r["tax"]["total_federal_tax"]
@@ -4504,6 +4645,8 @@ trail. Next session, *Load a saved return* picks up exactly where you left off.
 <tr style="border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">§1231(c) new loss</td><td style="padding:8px 12px;">New {_cy_roll} non-recaptured §1231 loss row on Form 4797</td><td style="padding:8px 12px;text-align:right;">${_roll_1231_new:,.0f}</td></tr>
 <tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">§1231(c) recaptured</td><td style="padding:8px 12px;">Add to the “already recaptured” column: {', '.join(f'{y} +${u:,.0f}' for y, u in _roll_1231_used) or '—'}</td><td style="padding:8px 12px;text-align:right;">${sum(u for _, u in _roll_1231_used):,.0f}</td></tr>
 <tr style="border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">NOL (§172) used</td><td style="padding:8px 12px;">Reduce the vintages drawn on this year: {', '.join(f'{y} −${u:,.0f}' for y, u in _roll_nol_used) or '—'}</td><td style="padding:8px 12px;text-align:right;">${sum(u for _, u in _roll_nol_used):,.0f}</td></tr>
+<tr style="border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">§39 credit used</td><td style="padding:8px 12px;">Reduce the vintages drawn on this year: {', '.join(f'{y} −${u:,.0f}' for y, u in _roll_gbc_used) or '—'}</td><td style="padding:8px 12px;text-align:right;">${sum(u for _, u in _roll_gbc_used):,.0f}</td></tr>
+<tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">§39 credit new</td><td style="padding:8px 12px;">Credit earned this year that the §38(c) ceiling would not let you use</td><td style="padding:8px 12px;text-align:right;">${_roll_gbc_new:,.0f}</td></tr>
 <tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">NOL (§172) new</td><td style="padding:8px 12px;">New {_cy_roll} vintage if this year ran a loss — no carryback, 80% limit, never expires</td><td style="padding:8px 12px;text-align:right;">${_roll_nol_new:,.0f}</td></tr>
 <tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">§163(j) interest</td><td style="padding:8px 12px;">Disallowed business interest carried forward indefinitely</td><td style="padding:8px 12px;text-align:right;">${_roll_163j:,.0f}</td></tr>
 <tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">Charitable (§170)</td><td style="padding:8px 12px;">Excess over the 10% limit — 5-year carryforward</td><td style="padding:8px 12px;text-align:right;">${_roll_char:,.0f}</td></tr>
@@ -4538,6 +4681,7 @@ trail. Next session, *Load a saved return* picks up exactly where you left off.
             "cap_new": _roll_cap_new, "cap_used": _roll_cap_used,
             "s1231_new": _roll_1231_new, "s1231_used": _roll_1231_used,
             "nol": _roll_nol, "nol_used": _roll_nol_used, "nol_new": _roll_nol_new,
+            "gbc_used": _roll_gbc_used, "gbc_new": _roll_gbc_new,
             "i163j": _roll_163j, "char": _roll_char,
             "total_tax": _roll_total_tax, "overpay_credit": _roll_overpay_credit,
         }
