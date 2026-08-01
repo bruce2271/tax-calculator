@@ -361,6 +361,69 @@ def calc_general_business_credit(current_year_credit: float, regular_tax: float,
     }
 
 
+# ── §1062 — deferral on a qualified farmland sale ────────────────────────────
+
+def calc_1062_deferral(tax_with_gain: float, tax_without_gain: float,
+                       elected: bool = True) -> dict:
+    """§1062. A corporation that sells qualified farmland to a qualified farmer may
+    elect to pay the tax on that gain over four years instead of all at once.
+
+    The deferred figure is not the tax on the gain computed in isolation — it is the
+    *difference* the gain makes to the whole return: net income tax with the gain less
+    net income tax without it. That matters because the gain can push other items around
+    (the §170 limit, the §163(j) base, whether an NOL is absorbed), and the statute
+    captures all of it.
+
+    Four equal annual instalments of 25%. The first is due on the return due date for
+    the year of sale, without regard to extensions.
+
+    The property must have been farmed by the taxpayer, or leased to a qualified farmer,
+    for substantially all of the ten years ending on the sale date.
+
+    Remaining instalments accelerate if one is missed, or — for a corporation — on
+    liquidation, a sale of substantially all assets, or ceasing business."""
+    antl = max(0.0, tax_with_gain - tax_without_gain)
+    if not elected:
+        return {"elected": False, "applicable_net_tax_liability": 0.0,
+                "installment": 0.0, "deferred": 0.0, "installments": []}
+    inst = antl / 4
+    return {"elected": True, "applicable_net_tax_liability": antl,
+            "installment": inst, "deferred": antl - inst,
+            "installments": [inst] * 4}
+
+
+# ── §6655 — estimated tax underpayment ───────────────────────────────────────
+
+def calc_6655_penalty(required_annual: float, payments, annual_rate: float = 0.07,
+                      days_outstanding=(365, 273, 182, 92)) -> dict:
+    """§6655. Interest on each quarterly instalment that fell short, running from its
+    due date to the return due date.
+
+    `required_annual` is the lesser of 100% of this year's tax and 100% of last year's,
+    under the §6655(d) safe harbour. A quarter of it is due on the 15th day of the 4th,
+    6th, 9th and 12th months. `payments` is the four amounts actually paid.
+
+    The rate is the federal short-term rate plus three points and is reset quarterly, so
+    it is a parameter rather than a constant. A shortfall in an early quarter is not
+    cured by overpaying later — each instalment stands on its own, which is why the
+    quarters are tested separately rather than netted."""
+    per_quarter = required_annual / 4
+    rows, penalty = [], 0.0
+    carry = 0.0                       # an overpayment does roll forward to later quarters
+    for i, paid in enumerate(list(payments)[:4]):
+        available = paid + carry
+        short = max(0.0, per_quarter - available)
+        carry = max(0.0, available - per_quarter)
+        days = days_outstanding[i] if i < len(days_outstanding) else 0
+        charge = short * annual_rate * days / 365
+        penalty += charge
+        rows.append({"quarter": i + 1, "required": per_quarter, "paid": paid,
+                     "shortfall": short, "days": days, "penalty": charge})
+    return {"required_annual": required_annual, "per_quarter": per_quarter,
+            "rows": rows, "penalty": penalty,
+            "total_shortfall": sum(r["shortfall"] for r in rows)}
+
+
 # ── NOL ───────────────────────────────────────────────────────────────────────
 
 def calc_nol(taxable_income_before_nol: float, nol_carryforward: float,

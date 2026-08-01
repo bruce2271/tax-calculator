@@ -24,6 +24,9 @@ book-tax reconciliations, and the return itself are derived from them.
 | **Form 4797** | Parts I–IV, §1245 / §1250 / §291 recapture, §1231(c) five-year look-back |
 | **Form 1125-A** | Cost of goods sold feeding page 1 line 2 as a read-only carried figure |
 | **Schedule J** | Tax computation aligned to the real line numbers |
+| **Page 1 lines 31–37** | Total tax, payments, the §6655 penalty and the amount owed or overpaid — all carried, none typed |
+| **§1062** | Qualified farmland sale deferral: the return is recomputed without the gain to size the liability, then paid in four annual instalments |
+| **§6655** | Quarterly underpayment interest, tested instalment by instalment |
 | **Schedule M-1 / M-3** | Both fully derived — see [The reconciliations](#the-reconciliations) |
 | **NOL (§172)** | Vintage-aware: pre-2018 tranches offset 100% and expire after 20 years; 2018+ tranches never expire but are capped at 80% |
 | **§263A UNICAP** | Percentage allocation across lines 12, 13, 14, 16, 17 and 20 into the inventory pool |

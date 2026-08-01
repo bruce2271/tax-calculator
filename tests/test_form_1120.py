@@ -14,8 +14,10 @@ import pytest
 from calculators.form_1120 import (
     calc_163j,
     calc_280c,
+    calc_1062_deferral,
     calc_1231_lookback,
     calc_4797_recapture,
+    calc_6655_penalty,
     calc_capital,
     calc_charitable,
     calc_drd_246b,
@@ -426,6 +428,73 @@ def test_41_floor_does_not_bind_when_the_computed_base_is_larger():
     assert r["base_amount"] == 800_000
     assert r["floor_binding"] is False
     assert r["credit"] == 40_000
+
+
+# ── §1062 — qualified farmland sale deferral ─────────────────────────────────
+
+def test_1062_defers_the_difference_the_gain_makes_to_the_whole_return():
+    """§1062. The deferred figure is net income tax with the gain less net income tax
+    without it — not the tax on the gain computed alone. Four equal instalments."""
+    r = calc_1062_deferral(tax_with_gain=500_000, tax_without_gain=300_000)
+    assert r["applicable_net_tax_liability"] == 200_000
+    assert r["installment"] == 50_000
+    assert r["deferred"] == 150_000
+    assert r["installments"] == [50_000] * 4
+
+
+def test_1062_without_the_election_nothing_is_deferred():
+    r = calc_1062_deferral(500_000, 300_000, elected=False)
+    assert r["applicable_net_tax_liability"] == 0
+    assert r["installment"] == 0
+
+
+def test_1062_page_one_algebra_leaves_a_quarter_owed():
+    """The point of the line 31/32/33 arrangement. Line 31 carries the full tax, line 33
+    removes the whole deferred amount as though paid, and line 32 adds back one
+    instalment — so only a quarter of the deferral is owed this year."""
+    r = calc_1062_deferral(500_000, 300_000)
+    line31, line32 = 500_000, r["installment"]
+    line33 = r["applicable_net_tax_liability"]        # no other payments
+    owed = line31 + line32 - line33
+    assert owed == 350_000                            # 300,000 other tax + 50,000
+    assert owed == 300_000 + r["installment"]
+
+
+# ── §6655 — estimated tax penalty ────────────────────────────────────────────
+
+def test_6655_charges_interest_on_each_quarterly_shortfall():
+    """$400,000 required means $100,000 a quarter. Paying $50,000 in Q1 and $100,000
+    after leaves a $50,000 Q1 shortfall outstanding for the full 365 days."""
+    r = calc_6655_penalty(400_000, [50_000, 100_000, 100_000, 100_000], annual_rate=0.07)
+    assert r["per_quarter"] == 100_000
+    assert [x["shortfall"] for x in r["rows"]] == [50_000, 0, 0, 0]
+    assert r["penalty"] == pytest.approx(50_000 * 0.07)
+
+
+def test_6655_a_later_overpayment_does_not_cure_an_earlier_miss():
+    """Each instalment stands on its own. Paying nothing in Q1 and double in Q2 still
+    costs interest on the Q1 shortfall for the quarter it was outstanding."""
+    late = calc_6655_penalty(400_000, [0, 200_000, 100_000, 100_000], annual_rate=0.07)
+    ontime = calc_6655_penalty(400_000, [100_000] * 4, annual_rate=0.07)
+    assert ontime["penalty"] == 0
+    assert late["penalty"] > 0
+    assert late["rows"][1]["shortfall"] == 0, "the Q2 overpayment does roll forward"
+
+
+def test_6655_an_earlier_overpayment_covers_a_later_quarter():
+    """The direction that does work. Paying $200,000 in Q1 and nothing in Q2 leaves no Q2
+    shortfall — the excess rolls forward. Mutation testing found the earlier test blind
+    here: it overpaid the *later* quarter, where dropping the roll-forward changed
+    nothing."""
+    r = calc_6655_penalty(400_000, [200_000, 0, 100_000, 100_000], annual_rate=0.07)
+    assert [x["shortfall"] for x in r["rows"]] == [0, 0, 0, 0]
+    assert r["penalty"] == 0
+
+
+def test_6655_meeting_the_safe_harbour_costs_nothing():
+    r = calc_6655_penalty(400_000, [100_000] * 4)
+    assert r["total_shortfall"] == 0
+    assert r["penalty"] == 0
 
 
 # ── calculate_1120 — the whole return ────────────────────────────────────────

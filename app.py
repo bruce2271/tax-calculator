@@ -4,7 +4,8 @@ from datetime import datetime
 import streamlit as st
 import streamlit.components.v1 as components
 from calculators.form_1120 import (calculate_1120, calc_drd_246b,
-                                   calc_4797_recapture, calc_1231_lookback)
+                                   calc_4797_recapture, calc_1231_lookback,
+                                   calc_1062_deferral, calc_6655_penalty)
 
 st.set_page_config(
     page_title="Form 1120 Tax Calculator",
@@ -311,6 +312,9 @@ DEFAULTS = {
     "avg_gross_receipts_rd": 0.0,
     "ftc": 0.0, "other_credits": 0.0,
     "elect_reduced_credit": True, "gbc_n": 1, "tentative_min_tax": 0.0,
+    "f1062_gain": 0.0, "f1062_elected": True, "f1062_n": 0,
+    "sj_l14": 0.0, "sj_l16": 0.0, "sj_l17": 0.0, "sj_l20": 0.0,
+    "penalty_rate": 7.0,
     # CAMT / BEAT
     "afsi": 0.0, "avg_afsi_3yr": 0.0,
     "avg_gross_receipts_3yr": 0.0,
@@ -394,7 +398,8 @@ STANDING_KEYS = {
     "has_cfc", "sf_owner_pct", "g_owner_pct", "gilti_regime",
     "dep_method", "macrs_life", "year_placed", "macrs_month", "fixed_base_pct",
     "avg_prior_3yr_qre", "avg_gross_receipts_rd", "avg_afsi_3yr", "avg_gross_receipts_3yr",
-    "nol_n", "gbc_n", "elect_reduced_credit", "interest_cf_prior", "cc_cf_prior", "prior_year_tax", "prior_overpayment",
+    "nol_n", "gbc_n", "elect_reduced_credit", "f1062_n", "f1062_elected",
+    "penalty_rate", "interest_cf_prior", "cc_cf_prior", "prior_year_tax", "prior_overpayment",
     "ati_override", "f4797_n_props", "roll_confirm", "roll_credit_overpay",
     "s267_accrual",
     "theme_font", "theme_font_name", "theme_size",
@@ -402,7 +407,7 @@ STANDING_KEYS = {
 # Prefixes whose keys hold prior-year history and must never be zeroed.
 KEEP_PREFIXES = ("sd_cf_loss_", "f4797_lb_loss_", "f4797_lb_recap_",
                  "f4797_desc_", "f4797_type_", "nol_year_", "nol_amt_",
-                 "gbc_year_", "gbc_amt_")
+                 "gbc_year_", "gbc_amt_", "f1062_year_", "f1062_amt_")
 # Prefixes of current-year amount fields that are not declared in DEFAULTS.
 # "sf_" and "g_" cover the Subpart F and GILTI/NCTI calculators; their ownership
 # percentages are listed in STANDING_KEYS and so are skipped before this is reached.
@@ -695,7 +700,7 @@ def col_headers(mode="income"):
         h3.markdown("**Tax Deduction ($)**")
 
 def build_1120_inputs(dividends_and_inclusions, special_deductions, nol_carryforward,
-                      pre2018_nol_carryforward=0.0):
+                      pre2018_nol_carryforward=0.0, include_farmland_gain=True):
     """Assemble calculate_1120() inputs from session_state. Called twice: once in the
     shared pass with special deductions and NOL zeroed to obtain line 28 (the §246(b)
     limit base), then again by Results Summary with the real figures."""
@@ -710,7 +715,8 @@ def build_1120_inputs(dividends_and_inclusions, special_deductions, nol_carryfor
                 (s.gross_rents_book     - s.gross_rents_adj) +
                 (s.gross_royalties_book - s.gross_royalties_adj) +
                 (s.other_income_book    - s.other_income_adj) +
-                s.get("f4797_line17", 0.0)      # Form 1120 line 9 — Form 4797 Part II line 17
+                s.get("f4797_line17", 0.0) +    # Form 1120 line 9 — Form 4797 Part II line 17
+                (s.get("f1062_gain", 0.0) if include_farmland_gain else 0.0)
             ),
             "short_term_capital_gain": s.get("sd_line7", 0.0),
             "long_term_capital_gain":  s.get("sd_line15", 0.0),
@@ -1157,6 +1163,28 @@ for _pre, _left in ((True, _nres.get("pre2018_used", 0.0)),
             continue
         _r["used"] = min(_r["live"], _left)
         _left -= _r["used"]
+# §1062 defers the difference the farmland gain makes to the whole return, not the tax
+# on the gain in isolation — so the return is recomputed without it and the two totals
+# compared. Same probe pattern as the §246(b) limit base.
+if st.session_state.get("f1062_gain", 0.0) > 0:
+    _no_farm = calculate_1120(build_1120_inputs(
+        SC["line23"], SC["line24"], NOL["post2017_pool"], NOL["pre2018_pool"],
+        include_farmland_gain=False))
+    DEFER = calc_1062_deferral(R1120["tax"]["total_federal_tax"],
+                               _no_farm["tax"]["total_federal_tax"],
+                               st.session_state.get("f1062_elected", True))
+else:
+    DEFER = calc_1062_deferral(0.0, 0.0, False)
+
+# §6655 lives here rather than on the Estimated Tax page because page 1 line 34 reads
+# it. Computed in a page branch it would be zero until that page happened to be opened.
+_p_cur = R1120["tax"]["total_federal_tax"]
+_p_pri = st.session_state.get("prior_year_tax", 0.0)
+PENALTY = calc_6655_penalty(
+    min(_p_cur, _p_pri) if _p_pri > 0 else _p_cur,
+    [st.session_state.get(k, 0.0) for k in ("q1", "q2", "q3", "q4")],
+    annual_rate=st.session_state.get("penalty_rate", 7.0) / 100)
+
 st.session_state["_taxable_income"] = R1120["taxable_income"]["taxable_income"]
 st.session_state["_federal_tax_paid"] = R1120["tax"]["total_federal_tax"]
 
@@ -2746,6 +2774,78 @@ skipped, so it is worth knowing.
         "the §250 deduction on NCTI (Net CFC Tested Income) and FDDEI (Foreign-Derived Deduction Eligible Income).",
     ])
 
+    # ── Lines 31–37 — where the return actually settles up ────────────────────
+    st.markdown("## Lines 31–37 — Tax, Payments and the Balance")
+    st.caption("Nothing here is typed. Line 31 comes from Schedule J line 11, line 33 from "
+               "Schedule J line 22, and line 34 from the §6655 worksheet on the Estimated "
+               "Tax page. This is the one part of page 1 that only reports.")
+
+    _l31 = R1120["tax"]["total_federal_tax"]
+    _l32 = DEFER["installment"]
+    _l33 = (st.session_state.get("prior_overpayment", 0.0)
+            + sum(st.session_state.get(k, 0.0) for k in ("q1", "q2", "q3", "q4"))
+            - st.session_state.get("sj_l14", 0.0)
+            + st.session_state.get("sj_l16", 0.0)
+            + st.session_state.get("sj_l17", 0.0)
+            + st.session_state.get("sj_l20", 0.0)
+            + DEFER["applicable_net_tax_liability"])
+    _l34 = PENALTY["penalty"]
+    _due = _l31 + _l32 + _l34
+    _l35 = max(0.0, _due - _l33)
+    _l36 = max(0.0, _l33 - _due)
+    # 37a/37b follow the election made in the year-end close, so page 1 and the
+    # rollforward cannot disagree about where an overpayment went.
+    _l37a = _l36 if st.session_state.get("roll_credit_overpay", False) else 0.0
+    _l37b = _l36 - _l37a
+
+    st.markdown(f"""
+<table style="width:100%;border-collapse:collapse;background:#f8f9fa;color:#1a1a2e;font-size:14px;">
+<thead><tr style="background:#2D5A9E;color:#ffffff;">
+<th style="padding:8px 12px;text-align:left;">Line</th>
+<th style="padding:8px 12px;text-align:left;">Item</th>
+<th style="padding:8px 12px;text-align:right;">Amount</th>
+</tr></thead>
+<tbody>
+<tr style="border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">31</td><td style="padding:8px 12px;">Total tax — <b>Schedule J line 11</b></td><td style="padding:8px 12px;text-align:right;">${_l31:,.0f}</td></tr>
+<tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">32</td><td style="padding:8px 12px;">First instalment of §1062 applicable net tax liability — Form 1062</td><td style="padding:8px 12px;text-align:right;">${_l32:,.0f}</td></tr>
+<tr style="border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">33</td><td style="padding:8px 12px;">Total payments, credits <i>and the §1062 liability</i> — <b>Schedule J line 22</b></td><td style="padding:8px 12px;text-align:right;">${_l33:,.0f}</td></tr>
+<tr style="background:#eef2f7;border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">34</td><td style="padding:8px 12px;">Estimated tax penalty — §6655, Form 2220</td><td style="padding:8px 12px;text-align:right;">${_l34:,.0f}</td></tr>
+<tr style="{'background:#1B3A6B;color:#ffffff;' if _l35 > 0 else 'border-bottom:1px solid #dee2e6;'}"><td style="padding:8px 12px;font-weight:bold;">35</td><td style="padding:8px 12px;font-weight:bold;">Amount owed — lines 31 + 32 + 34 over line 33</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">${_l35:,.0f}</td></tr>
+<tr style="{'background:#1B3A6B;color:#ffffff;' if _l36 > 0 else 'background:#eef2f7;border-bottom:1px solid #dee2e6;'}"><td style="padding:8px 12px;font-weight:bold;">36</td><td style="padding:8px 12px;font-weight:bold;">Overpayment — line 33 over lines 31 + 32 + 34</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">${_l36:,.0f}</td></tr>
+<tr style="border-bottom:1px solid #dee2e6;"><td style="padding:8px 12px;">37a</td><td style="padding:8px 12px;">Credited to next year's estimated tax</td><td style="padding:8px 12px;text-align:right;">${_l37a:,.0f}</td></tr>
+<tr style="background:#eef2f7;"><td style="padding:8px 12px;">37b</td><td style="padding:8px 12px;">Refunded</td><td style="padding:8px 12px;text-align:right;">${_l37b:,.0f}</td></tr>
+</tbody>
+</table>
+""", unsafe_allow_html=True)
+
+    st.caption("Lines 35 and 36 are mutually exclusive — the form has you enter one or the "
+               "other, never both, so only the live one is highlighted. Line 37 splits an "
+               "overpayment between next year's estimates and a refund; the split is chosen "
+               "in the year-end close on the Results Summary page.")
+
+    irc([
+        "<b>Why line 33 contains the §1062 liability as if it were a payment.</b> Line 31 "
+        "already includes the full tax on the farmland gain. Line 33 then removes the whole "
+        "deferred amount, and line 32 adds back only the first instalment — so the net effect "
+        "is that a quarter of it is paid this year and three quarters are pushed out."
+        "<br>The algebra: owed = (tax + 25% of deferral + penalty) − (payments + 100% of "
+        "deferral), which leaves tax on everything else plus a quarter of the deferral.",
+        "<b>§1062 (qualified farmland sales):</b> a sale of farmland to a qualified farmer, "
+        "where the seller farmed it or leased it to a qualified farmer for substantially all "
+        "of the preceding ten years, lets the tax on that gain be paid in <b>four equal "
+        "annual instalments</b>."
+        "<br>The deferred figure is the difference the gain makes to the <i>whole</i> return "
+        "— net income tax with it, less net income tax without it — not the tax on the gain "
+        "computed alone. The gain can move the §170 limit, the §163(j) base and whether an "
+        "NOL is absorbed, and the statute captures all of that.",
+        "<span style='color:#C53030'><b>Acceleration:</b> the remaining instalments all "
+        "become due at once if one is missed, or if the corporation liquidates, sells "
+        "substantially all of its assets, or ceases business.</span>",
+        "<b>§6655 penalty at line 34</b> is interest, not a fine — it runs on each quarterly "
+        "shortfall from that instalment's due date. Overpaying a later quarter does not undo "
+        "an earlier miss, which is why the quarters are tested one at a time.",
+    ])
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEDULE C — DIVIDENDS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3792,6 +3892,40 @@ elif section == "🧮 Schedule J — Tax Computation":
         ])
 
     with sj_tab_pay:
+        st.markdown("### §1062 — Qualified Farmland Sale Deferral (Form 1062)")
+        _f1, _f2 = st.columns(2)
+        _f1.number_input("Gain on the qualified sale or exchange ($)", min_value=0.0,
+                         step=10_000.0, format="%.2f", key="f1062_gain")
+        _f2.checkbox("Elect to defer under §1062", key="f1062_elected")
+        if DEFER["applicable_net_tax_liability"] > 0:
+            st.markdown(
+                f"<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+                f"margin:6px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+                f"Tax with the gain <b>${R1120['tax']['total_federal_tax']:,.0f}</b>, "
+                f"without it <b>${R1120['tax']['total_federal_tax'] - DEFER['applicable_net_tax_liability']:,.0f}</b> "
+                f"→ applicable net tax liability <b>${DEFER['applicable_net_tax_liability']:,.0f}</b>"
+                f"<br>Four equal instalments of <b>${DEFER['installment']:,.0f}</b>; "
+                f"<b>${DEFER['deferred']:,.0f}</b> is pushed into the next three years."
+                f"</div>", unsafe_allow_html=True)
+        else:
+            st.caption("No qualified farmland gain entered, or the election is off.")
+        irc([
+            "<b>§1062</b> lets a corporation selling qualified farmland to a qualified farmer "
+            "pay the tax on that gain over four years. The land must have been farmed by the "
+            "seller, or leased to a qualified farmer, for substantially all of the ten years "
+            "ending on the sale date.",
+            "<b>The deferred amount is a difference, not a standalone tax.</b> It is net income "
+            "tax computed with the gain, less net income tax computed without it — so it picks "
+            "up everything the gain moved: the §170 charitable limit, the §163(j) base, whether "
+            "an NOL was absorbed. This model recomputes the whole return both ways.",
+            "The first instalment is due on the return due date <b>without regard to "
+            "extensions</b>, and appears at page 1 line 32. The full liability appears at line "
+            "33 as though paid, which is what leaves only a quarter of it owed this year.",
+            "<span style='color:#C53030'>The remaining instalments accelerate — all become due "
+            "at once — on a missed payment, or if the corporation liquidates, sells "
+            "substantially all of its assets, or ceases business.</span>",
+        ])
+
         st.markdown("### Part II — Payments and Refundable Credits")
         st.caption("Quarterly estimates are entered on the 📅 Estimated Tax & Safe Harbor page and carried here.")
 
@@ -3811,7 +3945,7 @@ elif section == "🧮 Schedule J — Tax Computation":
 
         _sj_l15 = _sj_l12 + _sj_l13 - _sj_l14
         _sj_l18 = _sj_l15 + _sj_l16 + _sj_l17
-        _sj_l22 = _sj_l18 + _sj_l20
+        _sj_l22 = _sj_l18 + _sj_l20 + DEFER["applicable_net_tax_liability"]
         _sj_balance = _sj_l11 - _sj_l22
 
         st.markdown(f"""
@@ -4039,6 +4173,54 @@ elif section == "📅 Estimated Tax & Safe Harbor":
                       st.session_state.q3, st.session_state.q4,
                       st.session_state.prior_overpayment])
     st.metric("Total Payments to Date", f"${total_paid:,.0f}")
+
+    # ── §6655 penalty — feeds page 1 line 34 ─────────────────────────────────
+    st.markdown("## §6655 Underpayment Penalty — Form 2220")
+    _pen_rate = st.number_input("Federal short-term rate + 3 points (%)", min_value=0.0,
+                                max_value=20.0, step=0.5, key="penalty_rate",
+                                help="Reset quarterly by the IRS. Around 7% recently.")
+    _cur_tax = R1120["tax"]["total_federal_tax"]
+    _pri_tax = st.session_state.get("prior_year_tax", 0.0)
+    _required = PENALTY["required_annual"]
+    _pen = PENALTY
+
+    st.caption(f"Required annual instalment is the lesser of this year's tax "
+               f"(${_cur_tax:,.0f}) and last year's (${_pri_tax:,.0f}) under the §6655(d) "
+               f"safe harbour — ${_required:,.0f}, or ${_pen['per_quarter']:,.0f} a quarter.")
+    st.markdown(
+        "<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+        "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+        "<th style='padding:6px 8px;text-align:left'>Quarter</th>"
+        "<th style='padding:6px 8px;text-align:right'>Required</th>"
+        "<th style='padding:6px 8px;text-align:right'>Paid</th>"
+        "<th style='padding:6px 8px;text-align:right'>Shortfall</th>"
+        "<th style='padding:6px 8px;text-align:right'>Days</th>"
+        "<th style='padding:6px 8px;text-align:right'>Penalty</th></tr>"
+        + "".join(
+            f"<tr><td style='padding:5px 8px'>Q{r['quarter']}</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{r['required']:,.0f}</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{r['paid']:,.0f}</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{r['shortfall']:,.0f}</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{r['days']}</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{r['penalty']:,.0f}</td></tr>"
+            for r in _pen["rows"])
+        + f"<tr style='font-weight:700;background:#eef2f7'><td colspan='5' style='padding:6px 8px'>"
+          f"Total — carries to page 1 line 34</td>"
+          f"<td style='padding:6px 8px;text-align:right'>{_pen['penalty']:,.0f}</td></tr>"
+        + "</table></div>", unsafe_allow_html=True)
+    irc([
+        "<b>§6655 is interest, not a fine.</b> It runs on each quarterly shortfall from that "
+        "instalment's due date until the return due date, at the federal short-term rate plus "
+        "three points — a rate the IRS resets every quarter.",
+        "<b>Each quarter stands alone.</b> Overpaying in Q3 does not cure a Q1 miss; the "
+        "earlier shortfall has already accrued interest. An overpayment does roll forward to "
+        "cover later quarters, but never backwards.",
+        "<b>§6655(d) safe harbour:</b> pay the lesser of 100% of this year's tax or 100% of "
+        "last year's, in four equal instalments, and no penalty applies."
+        "<br><span style='color:#C53030'>A large corporation — taxable income of $1M or more "
+        "in any of the three preceding years — may use the prior-year figure for Q1 only. "
+        "Q2 through Q4 must be based on the current year.</span>",
+    ])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEDULE M-1
