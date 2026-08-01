@@ -124,6 +124,18 @@ components.html("""
     .result-card { background:white; border-radius:8px; padding:16px; border:1px solid #BEE3F8; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:12px; }
     .safe-harbor { background:#F0FFF4; border:1px solid #9AE6B4; border-radius:6px; padding:12px 16px; font-size:0.85rem; color:#276749; }
     .warn-box { background:#FFFBEB; border:1px solid #F6AD55; border-radius:6px; padding:10px 14px; font-size:0.85rem; color:#7B341E; }
+    /* The sidebar rule below forces every descendant to pale text with !important.
+       Inline styles cannot win that fight — Streamlit's HTML sanitiser strips any
+       declaration carrying !important — so the disclaimer is styled from here, where
+       !important is allowed and the selector is specific enough to take precedence. */
+    html body [data-testid="stSidebar"] .disclaimer-box,
+    html body [data-testid="stSidebar"] .disclaimer-box * {
+        color:#7A1C1C !important; -webkit-text-fill-color:#7A1C1C !important;
+    }
+    html body [data-testid="stSidebar"] .disclaimer-box {
+        background:#FDECEA !important; border-left:5px solid #C53030;
+        border-radius:3px; padding:10px 12px; margin:4px 0; line-height:1.45;
+    }
     [data-testid="stMetricValue"] { font-size:1.4rem !important; color:var(--c-metric-val) !important; }
     [data-testid="stMetricDelta"] { font-size:0.85rem !important; }
     table { width:100%; border-collapse:collapse; font-size:0.88rem; }
@@ -558,17 +570,18 @@ with st.sidebar:
                     st.rerun()
 
     # Always visible — a disclaimer behind a click is a disclaimer nobody reads.
+    # Colour comes from the .disclaimer-box rule in the injected stylesheet: the sidebar
+    # forces pale text with !important, and Streamlit's sanitiser strips !important out
+    # of inline styles, so this is the only place the override can live.
     st.markdown(
-        "<div style='background:#FDECEA;border-left:5px solid #C53030;padding:10px 12px;"
-        "margin:4px 0;color:#7A1C1C;-webkit-text-fill-color:#7A1C1C;font-size:0.8rem;"
-        "line-height:1.45;'><b>Educational tool — not tax advice.</b><br>"
+        "<div class='disclaimer-box' style='font-size:0.8rem;'>"
+        "<b>Educational tool — not tax advice.</b><br>"
         "Does not produce a filable return. Use illustrative figures only.</div>",
         unsafe_allow_html=True)
 
     with st.expander("⚠️ Full disclaimer — read before use"):
         st.markdown(
-            "<div style='background:#FDECEA;border-left:5px solid #C53030;padding:12px 14px;"
-            "color:#7A1C1C;-webkit-text-fill-color:#7A1C1C;font-size:0.85rem;line-height:1.5;'>"
+            "<div class='disclaimer-box' style='font-size:0.85rem;line-height:1.5;'>"
             "<b>Educational tool. Not tax advice.</b><br><br>"
             "This app was written to study how the mechanics of Form 1120 fit together. "
             "It is <b>not</b> prepared or reviewed by a CPA or an enrolled agent, it does "
