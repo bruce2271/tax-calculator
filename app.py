@@ -6,6 +6,8 @@ import streamlit.components.v1 as components
 from calculators.form_1120 import (calculate_1120, calc_drd_246b,
                                    calc_4797_recapture, calc_1231_lookback,
                                    calc_1062_deferral, calc_6655_penalty)
+from calculators.form_1065 import (calc_752_shares, calc_outside_basis,
+                                   calc_capital_account, calc_loss_limitations)
 
 st.set_page_config(
     page_title="Form 1120 Tax Calculator",
@@ -315,6 +317,12 @@ DEFAULTS = {
     "f1062_gain": 0.0, "f1062_elected": True, "f1062_n": 0,
     "sj_l14": 0.0, "sj_l16": 0.0, "sj_l17": 0.0, "sj_l20": 0.0,
     "penalty_rate": 7.0,
+    # Form 1065 — partner-level tracking
+    "p_begin_basis": 0.0, "p_contrib": 0.0, "p_contrib_fmv": 0.0,
+    "p_recourse": 0.0, "p_nonrecourse": 0.0, "p_qnre": 0.0, "p_liab_decrease": 0.0,
+    "p_income": 0.0, "p_exempt": 0.0, "p_distrib": 0.0, "p_nondeduct": 0.0,
+    "p_loss": 0.0, "p_passive_income": 0.0, "p_material": False,
+    "p_begin_ca": 0.0, "p_book_income": 0.0, "p_book_loss": 0.0, "p_distrib_fmv": 0.0,
     # CAMT / BEAT
     "afsi": 0.0, "avg_afsi_3yr": 0.0,
     "avg_gross_receipts_3yr": 0.0,
@@ -399,6 +407,7 @@ STANDING_KEYS = {
     "dep_method", "macrs_life", "year_placed", "macrs_month", "fixed_base_pct",
     "avg_prior_3yr_qre", "avg_gross_receipts_rd", "avg_afsi_3yr", "avg_gross_receipts_3yr",
     "nol_n", "gbc_n", "elect_reduced_credit", "f1062_n", "f1062_elected",
+    "p_material", 
     "penalty_rate", "interest_cf_prior", "cc_cf_prior", "prior_year_tax", "prior_overpayment",
     "ati_override", "f4797_n_props", "roll_confirm", "roll_credit_overpay",
     "s267_accrual",
@@ -641,6 +650,7 @@ with st.sidebar:
             "📤 Deductions (Lines 9–22)",
             "📋 Schedule K — Distributive Share Items",
             "🧾 Schedule K-1 — Per Partner Summary",
+            "🧮 Outside Basis & Loss Limitations",
         ], label_visibility="collapsed", key="f1065_nav")
 
 def irc(items):
@@ -6287,6 +6297,217 @@ elif active_form == "🤝 Form 1065":
         st.caption("Each column = one partner Schedule K-1. Character of each item is preserved for the partner own return.")
 
 
+
+    elif f1065_section == "🧮 Outside Basis & Loss Limitations":
+        st.markdown("## Outside Basis, Capital Account and the Loss Limitations")
+        st.markdown(
+            "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            "margin:8px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            "None of this appears on the return. Schedule K-1 reports a partner's "
+            "distributive share, but whether that share is <b>deductible</b> turns on three "
+            "limitations applied in a fixed order, against a basis figure the form never "
+            "prints. This is the part of partnership tax that is actually examined."
+            "</div>", unsafe_allow_html=True)
+
+        st.markdown("### §752 — the partner's share of partnership debt")
+        _q1, _q2, _q3 = st.columns(3)
+        _q1.number_input("Recourse ($)", min_value=0.0, step=10_000.0,
+                         format="%.2f", key="p_recourse")
+        _q2.number_input("Nonrecourse ($)", min_value=0.0, step=10_000.0,
+                         format="%.2f", key="p_nonrecourse")
+        _q3.number_input("Qualified nonrecourse real estate ($)", min_value=0.0,
+                         step=10_000.0, format="%.2f", key="p_qnre")
+        LIAB = calc_752_shares(st.session_state.get("p_recourse", 0.0),
+                               st.session_state.get("p_nonrecourse", 0.0),
+                               st.session_state.get("p_qnre", 0.0))
+        _m1, _m2 = st.columns(2)
+        _m1.metric("Adds to outside basis (§752)", f"\\${LIAB['total']:,.0f}")
+        _m2.metric("Counts as at risk (§465)", f"\\${LIAB['at_risk_portion']:,.0f}",
+                   delta=f"-{LIAB['not_at_risk']:,.0f} ordinary nonrecourse"
+                         if LIAB["not_at_risk"] else None, delta_color="inverse")
+        irc([
+            "<b>§752:</b> a partner's share of partnership debt is treated as a cash "
+            "contribution, so it raises outside basis without the partner paying anything. "
+            "This is why a partnership can push losses out to its partners that a C "
+            "corporation never can — debt creates basis here and never does there.",
+            "<span style='color:#C53030'><b>The split matters for §465.</b> Recourse debt "
+            "and qualified nonrecourse real estate financing under §465(b)(6) count as at "
+            "risk. Ordinary nonrecourse debt gives outside basis but no at-risk amount — "
+            "which is precisely where §704(d) and §465 come apart.</span>",
+            "<b>§465(b)(6) conditions:</b> secured by real property, borrowed from a "
+            "commercial lender in the business of lending, and not from a related party or "
+            "the seller.",
+        ])
+
+        st.markdown("### §705 — outside basis, in the order the regulation requires")
+        _b1, _b2 = st.columns(2)
+        with _b1:
+            st.markdown("**Increases**")
+            st.number_input("Beginning outside basis ($)", step=10_000.0,
+                            format="%.2f", key="p_begin_basis")
+            st.number_input("Contributions — §722, at adjusted basis ($)", min_value=0.0,
+                            step=10_000.0, format="%.2f", key="p_contrib")
+            st.number_input("Distributive share of taxable income ($)", min_value=0.0,
+                            step=10_000.0, format="%.2f", key="p_income")
+            st.number_input("Distributive share of tax-exempt income ($)", min_value=0.0,
+                            step=1_000.0, format="%.2f", key="p_exempt")
+        with _b2:
+            st.markdown("**Decreases**")
+            st.number_input("Distributions received — §733 ($)", min_value=0.0,
+                            step=10_000.0, format="%.2f", key="p_distrib")
+            st.number_input("Decrease in share of liabilities — §752(b) ($)",
+                            min_value=0.0, step=10_000.0, format="%.2f",
+                            key="p_liab_decrease")
+            st.number_input("Nondeductible, non-capitalisable expenses ($)",
+                            min_value=0.0, step=1_000.0, format="%.2f", key="p_nondeduct")
+            st.number_input("Distributive share of loss ($)", min_value=0.0,
+                            step=10_000.0, format="%.2f", key="p_loss")
+
+        OB = calc_outside_basis(
+            beginning=st.session_state.get("p_begin_basis", 0.0),
+            contributions=st.session_state.get("p_contrib", 0.0),
+            liability_increase=LIAB["total"],
+            taxable_income=st.session_state.get("p_income", 0.0),
+            tax_exempt_income=st.session_state.get("p_exempt", 0.0),
+            distributions=st.session_state.get("p_distrib", 0.0),
+            liability_decrease=st.session_state.get("p_liab_decrease", 0.0),
+            losses=st.session_state.get("p_loss", 0.0),
+            nondeductible=st.session_state.get("p_nondeduct", 0.0))
+
+        st.markdown(
+            "<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+            "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+            "<th style='padding:6px 8px;text-align:left'>Step</th>"
+            "<th style='padding:6px 8px;text-align:right'>Amount</th>"
+            "<th style='padding:6px 8px;text-align:right'>Running basis</th></tr>"
+            + "".join(
+                f"<tr><td style='padding:5px 8px'>{lbl}</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{amt:+,.0f}</td>"
+                f"<td style='padding:5px 8px;text-align:right;font-weight:600'>{run:,.0f}</td></tr>"
+                for lbl, amt, run in OB["steps"])
+            + "</table></div>", unsafe_allow_html=True)
+
+        if OB["gain_731a"] > 0:
+            st.markdown(
+                f"<div style='background:#FDECEA;border-left:5px solid #C53030;padding:10px 14px;"
+                f"margin:8px 0;color:#7A1C1C;-webkit-text-fill-color:#7A1C1C;'>"
+                f"<b>§731(a)(1) gain: ${OB['gain_731a']:,.0f}.</b> Distributions exceeded "
+                f"outside basis. Basis floors at zero and the excess is capital gain — a "
+                f"decrease in the partner's share of liabilities can trigger this without "
+                f"the partner receiving any cash at all.</div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>The order is fixed by Reg. §1.704-1(d)(2)</b> and is not cosmetic: income "
+            "raises basis first, then distributions reduce it, and only then losses. "
+            "A distribution therefore consumes basis a loss would otherwise have used.",
+            "<b>Worth testing yourself:</b> beginning basis $50,000, a $30,000 distribution "
+            "and a $40,000 loss. The distribution goes first, leaving $20,000 — so $20,000 "
+            "of loss is allowed and $20,000 suspended. Netting the two would have suggested "
+            "only $10,000 suspended, and would be wrong.",
+            "<b>Timing:</b> income raises basis at <i>year end</i>, not when it is "
+            "distributed. Mid-year draws are treated as occurring at year end, which keeps "
+            "an ordinary draw from accidentally exceeding basis.",
+            "<b>Symmetry:</b> tax-exempt income raises basis even though it is never taxed, "
+            "and nondeductible expenses reduce it even though they never give a deduction. "
+            "Without both, the item would be taxed or relieved a second time on sale.",
+        ])
+
+        st.markdown("### §704(b) — capital account, the other tracking system")
+        _c1, _c2 = st.columns(2)
+        _c1.number_input("Beginning capital account ($)", step=10_000.0,
+                         format="%.2f", key="p_begin_ca")
+        _c1.number_input("Contributions at fair market value ($)", min_value=0.0,
+                         step=10_000.0, format="%.2f", key="p_contrib_fmv")
+        _c2.number_input("Share of book income ($)", min_value=0.0, step=10_000.0,
+                         format="%.2f", key="p_book_income")
+        _c2.number_input("Distributions at fair market value ($)", min_value=0.0,
+                         step=10_000.0, format="%.2f", key="p_distrib_fmv")
+        CA = calc_capital_account(
+            beginning=st.session_state.get("p_begin_ca", 0.0),
+            contributions_fmv=st.session_state.get("p_contrib_fmv", 0.0),
+            book_income=st.session_state.get("p_book_income", 0.0),
+            distributions_fmv=st.session_state.get("p_distrib_fmv", 0.0),
+            book_loss=st.session_state.get("p_book_loss", 0.0))
+
+        _g1, _g2, _g3 = st.columns(3)
+        _g1.metric("Capital account (book)", f"\\${CA['ending']:,.0f}")
+        _g2.metric("Outside basis (tax)", f"\\${OB['ending_basis']:,.0f}")
+        _g3.metric("Gap", f"\\${CA['ending'] - OB['ending_basis']:,.0f}")
+        irc([
+            "<b>They answer different questions.</b> The capital account measures what the "
+            "partner is economically entitled to and governs who gets what on liquidation. "
+            "Outside basis measures how much loss may be deducted and how much of a "
+            "distribution is tax free.",
+            "<b>Four things drive them apart</b> — liabilities are in basis and never in the "
+            "capital account; contributed property enters the capital account at fair market "
+            "value and basis at the contributor's adjusted basis (the gap is the §704(c) "
+            "built-in gain); tax-exempt income raises basis only; and book depreciation runs "
+            "off the capital account while tax depreciation runs off basis.",
+            "<span style='color:#C53030'>After a book-up revaluation the two can be far "
+            "apart — which is how a partner ends up with a large positive capital account "
+            "and no tax basis at all.</span>",
+        ])
+
+        st.markdown("### §704(d) → §465 → §469 — three limitations, in this order")
+        _l1, _l2 = st.columns(2)
+        _l1.number_input("Passive income available ($)", min_value=0.0, step=1_000.0,
+                         format="%.2f", key="p_passive_income")
+        _l2.checkbox("Partner materially participates (§469 does not apply)",
+                     key="p_material")
+
+        LL = calc_loss_limitations(
+            allocable_loss=st.session_state.get("p_loss", 0.0),
+            outside_basis=OB["ending_basis"] + OB["loss_allowed_by_basis"],
+            at_risk_amount=(st.session_state.get("p_begin_basis", 0.0)
+                            + st.session_state.get("p_contrib", 0.0)
+                            + LIAB["at_risk_portion"]),
+            passive_income=st.session_state.get("p_passive_income", 0.0),
+            materially_participates=st.session_state.get("p_material", False))
+
+        st.markdown(
+            "<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+            "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+            "<th style='padding:6px 8px;text-align:left'>Limitation</th>"
+            "<th style='padding:6px 8px;text-align:right'>Ceiling</th>"
+            "<th style='padding:6px 8px;text-align:right'>Passes through</th>"
+            "<th style='padding:6px 8px;text-align:right'>Suspended here</th>"
+            "<th style='padding:6px 8px;text-align:left'>Released by</th></tr>"
+            + "".join(
+                f"<tr><td style='padding:5px 8px'>{name}</td>"
+                f"<td style='padding:5px 8px;text-align:right'>"
+                f"{ceil if isinstance(ceil, str) else format(ceil, ',.0f')}</td>"
+                f"<td style='padding:5px 8px;text-align:right;font-weight:600'>{thru:,.0f}</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{susp:,.0f}</td>"
+                f"<td style='padding:5px 8px;color:#4A5568'>{rel}</td></tr>"
+                for name, ceil, thru, susp, rel in LL["steps"])
+            + f"<tr style='font-weight:700;background:#eef2f7'>"
+              f"<td style='padding:6px 8px'>Deductible this year</td>"
+              f"<td style='padding:6px 8px'></td>"
+              f"<td style='padding:6px 8px;text-align:right'>{LL['deductible']:,.0f}</td>"
+              f"<td style='padding:6px 8px;text-align:right'>{LL['total_suspended']:,.0f}</td>"
+              f"<td style='padding:6px 8px'></td></tr>"
+            + "</table></div>", unsafe_allow_html=True)
+
+        st.caption(f"Allocable loss ${LL['allocable_loss']:,.0f} = deductible "
+                   f"${LL['deductible']:,.0f} + suspended ${LL['total_suspended']:,.0f}. "
+                   f"A limitation defers a loss; it never destroys one.")
+
+        irc([
+            "<b>Each limitation applies to what the previous one allowed</b>, not to the raw "
+            "loss. That is why the order is examined: reversing §704(d) and §465 changes the "
+            "answer whenever the two ceilings differ.",
+            "<b>§704(d)</b> — is there basis? Ordinary nonrecourse debt satisfies this one.",
+            "<b>§465</b> — is the partner at risk? Ordinary nonrecourse debt does not, so a "
+            "leveraged real estate deal typically clears §704(d) and stops here.",
+            "<b>§469</b> — is the activity passive? A limited partner is presumed not to "
+            "materially participate, so partnership losses are usually passive to them and "
+            "deductible only against passive income.",
+            "<span style='color:#C53030'><b>The three suspensions are never netted</b> "
+            "because they are released by different events: basis being restored, amounts "
+            "being placed at risk, and passive income arising or the activity being disposed "
+            "of in a fully taxable transaction. Suspended losses keep their original "
+            "character — ordinary, capital or §1231 — when they are finally allowed.</span>",
+        ])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOPIC — QBI DEDUCTION §199A
