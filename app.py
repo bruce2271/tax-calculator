@@ -323,6 +323,8 @@ DEFAULTS = {
     "p_income": 0.0, "p_exempt": 0.0, "p_distrib": 0.0, "p_nondeduct": 0.0,
     "p_loss": 0.0, "p_passive_income": 0.0, "p_material": False,
     "p_begin_ca": 0.0, "p_book_income": 0.0, "p_book_loss": 0.0, "p_distrib_fmv": 0.0,
+    "f65_m1_book": 0.0, "f65_m1_l2": 0.0, "f65_m1_l4a": 0.0, "f65_m1_l4b": 0.0,
+    "f65_m1_l7a": 0.0, "f65_m2_other_inc": 0.0, "f65_m2_other_dec": 0.0,
     # CAMT / BEAT
     "afsi": 0.0, "avg_afsi_3yr": 0.0,
     "avg_gross_receipts_3yr": 0.0,
@@ -650,6 +652,7 @@ with st.sidebar:
             "📤 Deductions (Lines 9–22)",
             "📋 Schedule K — Distributive Share Items",
             "🧾 Schedule K-1 — Per Partner Summary",
+            "📚 Schedule M-1 & M-2 — Reconciliation",
             "🧮 Outside Basis & Loss Limitations",
         ], label_visibility="collapsed", key="f1065_nav")
 
@@ -6096,6 +6099,19 @@ elif active_form == "🤝 Form 1065":
             step=step, format="%.2f", key=key
         )
 
+    def f65_partners():
+        """Partner roster with sharing ratios. Read by Schedule K-1, Schedule M-2 and
+        the basis page, so all three agree on who owns what."""
+        n = int(st.session_state.get("f65_n_partners", 2))
+        out = []
+        for i in range(n):
+            st.session_state.setdefault(f"f65_pname_{i}", f"Partner {chr(65 + i)}")
+            st.session_state.setdefault(f"f65_pct_{i}", round(100.0 / n, 1))
+            out.append({"i": i,
+                        "name": st.session_state[f"f65_pname_{i}"],
+                        "ratio": st.session_state[f"f65_pct_{i}"] / 100.0})
+        return out
+
     def _f65_ord_income():
         gp = st.session_state.get("f65_gp_services", 0.0) + st.session_state.get("f65_gp_capital", 0.0)
         dep_net = st.session_state.get("f65_dep", 0.0) - st.session_state.get("f65_dep_elsewhere", 0.0)
@@ -6118,6 +6134,51 @@ elif active_form == "🤝 Form 1065":
                + st.session_state.get("f65_benefits", 0.0)
                + st.session_state.get("f65_other_ded", 0.0))
         return inc - ded
+
+    def f65_schedule_k():
+        """Schedule K in the order the form prints it. Line 1 is carried from page 1
+        line 22 and line 4 from the guaranteed payments deducted there, so neither can
+        be typed twice and disagree."""
+        g = lambda k: st.session_state.get(k, 0.0)
+        gp_s, gp_c = g("f65_gp_services"), g("f65_gp_capital")
+        rows = [
+            ("1",   "Ordinary business income (loss) — page 1, line 22", _f65_ord_income(), True),
+            ("2",   "Net rental real estate income (loss) — Form 8825", g("f65_k_rental_re"), False),
+            ("3a",  "Other gross rental income (loss)", g("f65_k_gross_rental"), False),
+            ("3b",  "Expenses from other rental activities", -g("f65_k_rental_exp"), False),
+            ("3c",  "Other net rental income (loss)", g("f65_k_gross_rental") - g("f65_k_rental_exp"), True),
+            ("4a",  "Guaranteed payments — services", gp_s, True),
+            ("4b",  "Guaranteed payments — capital", gp_c, True),
+            ("4c",  "Total guaranteed payments", gp_s + gp_c, True),
+            ("5",   "Interest income", g("f65_k_interest"), False),
+            ("6a",  "Ordinary dividends", g("f65_k_ord_div"), False),
+            ("6b",  "Qualified dividends", g("f65_k_qual_div"), False),
+            ("7",   "Royalties", g("f65_k_royalties"), False),
+            ("8",   "Net short-term capital gain (loss) — Schedule D", g("f65_k_stcg"), False),
+            ("9a",  "Net long-term capital gain (loss) — Schedule D", g("f65_k_ltcg"), False),
+            ("9b",  "Collectibles (28%) gain (loss)", g("f65_k_collectibles"), False),
+            ("9c",  "Unrecaptured section 1250 gain", g("f65_k_1250"), False),
+            ("10",  "Net section 1231 gain (loss) — Form 4797", g("f65_k_1231"), False),
+            ("11",  "Other income (loss)", g("f65_k_other_inc"), False),
+            ("12",  "Section 179 deduction — Form 4562", -g("f65_k_179"), False),
+            ("13a", "Contributions", -g("f65_k_charitable"), False),
+            ("13b", "Investment interest expense", -g("f65_k_inv_int"), False),
+            ("13d", "Other deductions", -g("f65_k_other_ded"), False),
+            ("14a", "Net earnings (loss) from self-employment", g("f65_k_se"), False),
+            ("15a", "Credits", g("f65_k_credits"), False),
+            ("18a", "Tax-exempt interest income", g("f65_k_taxexempt"), False),
+            ("18c", "Nondeductible expenses", g("f65_k_nonded"), False),
+            ("19a", "Distributions of cash and marketable securities", g("f65_k_dist_cash"), False),
+            ("19b", "Distributions of other property", g("f65_k_dist_prop"), False),
+            ("20a", "Investment income", g("f65_k_inv_income"), False),
+        ]
+        # Analysis of Net Income (Loss): the income and deduction items only. Guaranteed
+        # payments appear at 4c but were already deducted at page 1 line 10, so only the
+        # subtotals 4a and 4b are excluded to avoid counting them twice.
+        skip = {"3a", "3b", "4c", "14a", "15a", "18a", "18c", "19a", "19b", "20a"}
+        analysis = sum(v for ln, _, v, _ in rows if ln not in skip)
+        return {"rows": rows, "analysis": analysis,
+                "carried": {ln for ln, _, _, c in rows if c}}
 
     # PAGE: INCOME
     if f1065_section == "📥 Income (Lines 1–8)":
@@ -6172,131 +6233,481 @@ elif active_form == "🤝 Form 1065":
         f65_row("19", "Employee benefit programs", "f65_benefits")
         f65_row("20", "Other deductions", "f65_other_ded")
 
+        _g65 = lambda k: st.session_state.get(k, 0.0)
+        _l21 = (_g65("f65_salaries") + gp_s + gp_c + _g65("f65_repairs")
+                + _g65("f65_bad_debt") + _g65("f65_rent") + _g65("f65_taxes")
+                + _g65("f65_interest") + (dep - dep_e) + _g65("f65_depletion")
+                + _g65("f65_retirement") + _g65("f65_benefits") + _g65("f65_other_ded"))
         ord_income = _f65_ord_income()
-        if ord_income >= 0:
-            st.success(f"**Line 22 — Ordinary Business Income: \\${ord_income:,.0f}**  ->  flows to Schedule K Line 1")
-        else:
-            st.error(f"**Line 22 — Ordinary Business Loss: (\\${abs(ord_income):,.0f})**  ->  flows to Schedule K Line 1")
+
+        st.markdown("### Lines 21–30 — Totals and the Balance Due")
+        st.caption("A partnership does not pay income tax, so there is no tax line here. "
+                   "Lines 23 to 26 are the narrow cases where it does owe something in "
+                   "its own name.")
+        _f21, _f22 = st.columns(2)
+        _f21.number_input("[Line 23] Look-back interest — completed long-term contracts ($)",
+                          min_value=0.0, step=1_000.0, format="%.2f", key="f65_l23")
+        _f21.number_input("[Line 24] Look-back interest — income forecast method ($)",
+                          min_value=0.0, step=1_000.0, format="%.2f", key="f65_l24")
+        _f22.number_input("[Line 25] BBA AAR imputed underpayment ($)", min_value=0.0,
+                          step=1_000.0, format="%.2f", key="f65_l25")
+        _f22.number_input("[Line 26] Other taxes ($)", min_value=0.0, step=1_000.0,
+                          format="%.2f", key="f65_l26")
+        _f22.number_input("[Line 28] Payment ($)", min_value=0.0, step=1_000.0,
+                          format="%.2f", key="f65_l28")
+
+        _l27 = _g65("f65_l23") + _g65("f65_l24") + _g65("f65_l25") + _g65("f65_l26")
+        _l29 = max(0.0, _l27 - _g65("f65_l28"))
+        _l30 = max(0.0, _g65("f65_l28") - _l27)
+
+        st.markdown(
+            f"<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+            f"<tr style='background:#EBF4FF;color:#1B3A6B'>"
+            f"<th style='padding:6px 8px;text-align:left;width:60px'>Line</th>"
+            f"<th style='padding:6px 8px;text-align:left'>Item</th>"
+            f"<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+            f"<tr><td style='padding:5px 8px'>21</td><td style='padding:5px 8px'>"
+            f"Total deductions — add lines 9 through 20</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_l21:,.0f}</td></tr>"
+            f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+            f"<td style='padding:6px 8px'>22</td><td style='padding:6px 8px'>"
+            f"Ordinary business income (loss) — line 8 less line 21 "
+            f"&rarr; <b>Schedule K, line 1</b></td>"
+            f"<td style='padding:6px 8px;text-align:right'>{ord_income:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>27</td><td style='padding:5px 8px'>"
+            f"Total balance due — add lines 23 through 26</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_l27:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>29</td><td style='padding:5px 8px'>"
+            f"Amount owed</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_l29:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>30</td><td style='padding:5px 8px'>"
+            f"Overpayment</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_l30:,.0f}</td></tr>"
+            f"</table></div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>There is no tax line on page 1.</b> §701 makes a partnership a conduit "
+            "— it is not subject to income tax, and the income is taxed to the partners "
+            "whether or not anything is distributed.",
+            "<b>Line 25 is the exception worth knowing.</b> Under the BBA centralised audit "
+            "regime the partnership itself can owe an imputed underpayment on an audit "
+            "adjustment, computed at the highest rate, unless it elects to push the "
+            "adjustment out to the partners of the reviewed year.",
+        ])
 
     # PAGE: SCHEDULE K
     elif f1065_section == "📋 Schedule K — Distributive Share Items":
-        st.markdown("## Schedule K — Partners' Distributive Share Items (Total)")
+        st.markdown("## Schedule K — Partners' Distributive Share Items")
         irc([
-            "<b>Schedule K</b> aggregates ALL items flowing to partners. Line 1 = ordinary business income from page 1 line 22. All other lines are separately stated items preserving their character at the partner level.",
-            "<b>Why separately stated?</b> Each item may be subject to different limitations — §469 passive activity rules, §1211 capital loss limits, charitable deduction floors, AMT adjustments, and self-employment tax — depending on the individual partner.",
+            "<b>Line 1 is the only non-separately-stated figure.</b> It is the ordinary "
+            "business income from page 1 line 22 — everything whose character is the same "
+            "for every partner, already netted.",
+            "<b>Everything else is separately stated</b> because its treatment depends on "
+            "the partner, not the partnership: a capital loss meets §1211 on the partner's "
+            "own return, a charitable contribution meets that partner's percentage limit, "
+            "passive losses meet §469, and only some items carry self-employment tax.",
+            "<span style='color:#C53030'><b>Guaranteed payments appear twice on purpose.</b> "
+            "They are deducted at page 1 line 10 in computing ordinary income, and reported "
+            "again at line 4 as income to the recipient partner. §707(c) treats them as paid "
+            "to a non-partner, so the partnership deducts and the partner reports — the same "
+            "dollars, two places, no double counting.</span>",
         ])
 
-        ord_income = _f65_ord_income()
-        st.markdown(f"**Line 1 — Ordinary business income (from line 22): ${ord_income:,.0f}**")
-        st.divider()
+        st.markdown("### Income (Loss)")
+        _ki1, _ki2 = st.columns(2)
+        with _ki1:
+            f65_row("2", "Net rental real estate income (loss)", "f65_k_rental_re", allow_neg=True)
+            f65_row("3a", "Other gross rental income (loss)", "f65_k_gross_rental", allow_neg=True)
+            f65_row("3b", "Expenses from other rental activities", "f65_k_rental_exp")
+            f65_row("5", "Interest income", "f65_k_interest")
+            f65_row("6a", "Ordinary dividends", "f65_k_ord_div")
+            f65_row("6b", "Qualified dividends", "f65_k_qual_div")
+            f65_row("7", "Royalties", "f65_k_royalties")
+        with _ki2:
+            f65_row("8", "Net short-term capital gain (loss)", "f65_k_stcg", allow_neg=True)
+            f65_row("9a", "Net long-term capital gain (loss)", "f65_k_ltcg", allow_neg=True)
+            f65_row("9b", "Collectibles (28%) gain (loss)", "f65_k_collectibles")
+            f65_row("9c", "Unrecaptured section 1250 gain", "f65_k_1250")
+            f65_row("10", "Net section 1231 gain (loss)", "f65_k_1231", allow_neg=True)
+            f65_row("11", "Other income (loss)", "f65_k_other_inc", allow_neg=True)
 
-        st.markdown("#### Income / Loss Items")
-        f65_row("2", "Net rental real estate income (loss)", "f65_k_rental_re", allow_neg=True)
-        f65_row("3c", "Other net rental income (loss)", "f65_k_other_rental", allow_neg=True)
-        gp_total = st.session_state.get("f65_gp_services", 0.0) + st.session_state.get("f65_gp_capital", 0.0)
-        st.markdown(f"*Line 4 — Guaranteed payments (carried from deductions): ${gp_total:,.0f}*")
-        f65_row("5", "Interest income", "f65_k_interest")
-        f65_row("6a", "Ordinary dividends", "f65_k_ord_div")
-        f65_row("6b", "Qualified dividends", "f65_k_qual_div")
-        f65_row("7", "Royalties", "f65_k_royalties")
-        f65_row("8", "Net short-term capital gain (loss)", "f65_k_stcg", allow_neg=True)
-        f65_row("9a", "Net long-term capital gain (loss)", "f65_k_ltcg", allow_neg=True)
-        f65_row("10", "Net §1231 gain (loss)", "f65_k_1231", allow_neg=True)
-        f65_row("11", "Other income (loss)", "f65_k_other_inc", allow_neg=True)
+        st.markdown("### Deductions")
+        _kd1, _kd2 = st.columns(2)
+        with _kd1:
+            f65_row("12", "Section 179 deduction", "f65_k_179")
+            f65_row("13a", "Contributions", "f65_k_charitable")
+        with _kd2:
+            f65_row("13b", "Investment interest expense", "f65_k_inv_int")
+            f65_row("13d", "Other deductions", "f65_k_other_ded")
 
-        st.markdown("#### Deduction Items")
-        f65_row("12", "§179 deduction", "f65_k_179")
-        f65_row("13a", "Charitable contributions", "f65_k_charitable")
-        f65_row("13d", "Other deductions", "f65_k_other_ded")
+        st.markdown("### Self-Employment, Credits and Other Information")
+        _ko1, _ko2 = st.columns(2)
+        with _ko1:
+            f65_row("14a", "Net earnings (loss) from self-employment", "f65_k_se", allow_neg=True)
+            f65_row("15a", "Credits", "f65_k_credits")
+            f65_row("18a", "Tax-exempt interest income", "f65_k_taxexempt")
+            f65_row("18c", "Nondeductible expenses", "f65_k_nonded")
+        with _ko2:
+            f65_row("19a", "Distributions of cash and marketable securities", "f65_k_dist_cash")
+            f65_row("19b", "Distributions of other property", "f65_k_dist_prop")
+            f65_row("20a", "Investment income", "f65_k_inv_income")
 
-        st.markdown("#### Other Information")
-        f65_row("18a", "Tax-exempt income", "f65_k_taxexempt")
-        f65_row("18b", "Nondeductible expenses", "f65_k_nonded")
-        f65_row("19a", "Distributions — cash & marketable securities", "f65_k_dist_cash")
-        f65_row("19b", "Distributions — other property (FMV)", "f65_k_dist_prop")
-
-        st.divider()
-        st.markdown("**Schedule K Total Summary**")
-        k_items = {
-            "Ordinary business income": ord_income,
-            "Net rental real estate": st.session_state.get("f65_k_rental_re", 0.0),
-            "Other rental": st.session_state.get("f65_k_other_rental", 0.0),
-            "Guaranteed payments": gp_total,
-            "Interest income": st.session_state.get("f65_k_interest", 0.0),
-            "Ordinary dividends": st.session_state.get("f65_k_ord_div", 0.0),
-            "Qualified dividends": st.session_state.get("f65_k_qual_div", 0.0),
-            "Royalties": st.session_state.get("f65_k_royalties", 0.0),
-            "Net STCG (loss)": st.session_state.get("f65_k_stcg", 0.0),
-            "Net LTCG (loss)": st.session_state.get("f65_k_ltcg", 0.0),
-            "Net §1231 gain (loss)": st.session_state.get("f65_k_1231", 0.0),
-            "Other income": st.session_state.get("f65_k_other_inc", 0.0),
-            "§179 deduction": -st.session_state.get("f65_k_179", 0.0),
-            "Charitable contributions": -st.session_state.get("f65_k_charitable", 0.0),
-            "Tax-exempt income": st.session_state.get("f65_k_taxexempt", 0.0),
-            "Nondeductible expenses": st.session_state.get("f65_k_nonded", 0.0),
-        }
-        for label, amt in k_items.items():
-            if amt != 0:
-                st.markdown(f"- {label}: **${amt:,.0f}**")
+        K = f65_schedule_k()
+        st.markdown("### Schedule K as filed")
+        st.markdown(
+            "<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+            "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+            "<th style='padding:6px 8px;text-align:left;width:60px'>Line</th>"
+            "<th style='padding:6px 8px;text-align:left'>Item</th>"
+            "<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+            + "".join(
+                f"<tr style=\"{'background:#eef2f7;font-weight:600' if carried else ''}\">"
+                f"<td style='padding:5px 8px'>{ln}</td>"
+                f"<td style='padding:5px 8px'>{lbl}"
+                f"{'  <i>(carried)</i>' if carried else ''}</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{val:,.0f}</td></tr>"
+                for ln, lbl, val, carried in K["rows"] if val or carried)
+            + f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+              f"<td style='padding:6px 8px'>—</td>"
+              f"<td style='padding:6px 8px'>Analysis of Net Income (Loss)</td>"
+              f"<td style='padding:6px 8px;text-align:right'>{K['analysis']:,.0f}</td></tr>"
+            + "</table></div>", unsafe_allow_html=True)
+        st.caption("Shaded rows are carried from elsewhere on the return and cannot be "
+                   "typed here. The Analysis line adds the income and deduction items only "
+                   "— it excludes the 3a/3b components already netted into 3c, the 4a/4b "
+                   "components already in 4c, and the memorandum items at 14 onward.")
 
     # PAGE: K-1
     elif f1065_section == "🧾 Schedule K-1 — Per Partner Summary":
-        st.markdown("## Schedule K-1 — Per Partner Summary")
+        st.markdown("## Schedule K-1 (Form 1065) — Partner's Share of Income, "
+                    "Deductions, Credits, etc.")
         irc([
-            "<b>Schedule K-1:</b> Each partner receives one K-1 showing their allocable share of every Schedule K item. The sum of all K-1s equals Schedule K. Partners report K-1 amounts on their own Form 1040 or Form 1120.",
-            "<b>Sharing ratios:</b> By default, items are allocated by profit/loss sharing %. Special allocations are allowed if they have substantial economic effect under §704(b).",
+            "<b>Every Schedule K figure is divided among the partners</b>, and the K-1s must "
+            "add back to Schedule K exactly. Items are allocated by the sharing ratio unless "
+            "a special allocation has substantial economic effect under §704(b).",
+            "<b>Part II is where the partner-level tracking surfaces.</b> Item K reports the "
+            "share of liabilities that gives outside basis under §752, and Item L the §704(b) "
+            "capital account. Both are carried here from the analysis on the "
+            "<b>🧮 Outside Basis</b> page rather than entered twice.",
         ])
 
-        n_partners = int(st.number_input("Number of partners", min_value=1, max_value=10, value=2, key="f65_n_partners"))
-        names = []
-        ratios = []
-        ratio_cols = st.columns(n_partners)
-        for i in range(n_partners):
-            with ratio_cols[i]:
-                name = st.text_input(f"Partner {i+1}", value=f"Partner {chr(65+i)}", key=f"f65_pname_{i}")
-                pct = st.number_input("Share %", min_value=0.0, max_value=100.0,
-                                      value=round(100.0/n_partners, 1), step=0.1, key=f"f65_pct_{i}")
-                names.append(name)
-                ratios.append(pct / 100.0)
+        st.number_input("Number of partners", min_value=1, max_value=10, step=1,
+                        key="f65_n_partners")
+        PARTNERS = f65_partners()
+        _pc = st.columns(len(PARTNERS))
+        for _p in PARTNERS:
+            with _pc[_p["i"]]:
+                st.text_input(f"Partner {_p['i'] + 1} name", key=f"f65_pname_{_p['i']}")
+                st.number_input("Profit, loss and capital share (%)", min_value=0.0,
+                                max_value=100.0, step=0.1, key=f"f65_pct_{_p['i']}")
 
-        total_pct = sum(ratios)
-        if abs(total_pct - 1.0) > 0.005:
-            st.warning(f"Sharing ratios sum to {total_pct*100:.1f}% — should equal 100%.")
+        PARTNERS = f65_partners()
+        _tot = sum(x["ratio"] for x in PARTNERS)
+        if abs(_tot - 1.0) > 0.005:
+            st.warning(f"Sharing ratios total {_tot * 100:.1f}%. Schedule K-1 must add "
+                       f"back to Schedule K, so these have to reach 100%.")
 
-        ord_income = _f65_ord_income()
-        gp_total = st.session_state.get("f65_gp_services", 0.0) + st.session_state.get("f65_gp_capital", 0.0)
+        st.markdown("### Partnership liabilities — allocated to Item K")
+        _lq1, _lq2, _lq3 = st.columns(3)
+        _lq1.number_input("Nonrecourse ($)", min_value=0.0, step=10_000.0,
+                          format="%.2f", key="f65_liab_nr")
+        _lq2.number_input("Qualified nonrecourse financing ($)", min_value=0.0,
+                          step=10_000.0, format="%.2f", key="f65_liab_qnre")
+        _lq3.number_input("Recourse ($)", min_value=0.0, step=10_000.0,
+                          format="%.2f", key="f65_liab_rec")
 
-        k_schedule = {
-            "1 — Ordinary business income (loss)": ord_income,
-            "2 — Net rental real estate income (loss)": st.session_state.get("f65_k_rental_re", 0.0),
-            "3 — Other rental income (loss)": st.session_state.get("f65_k_other_rental", 0.0),
-            "4 — Guaranteed payments (total)": gp_total,
-            "5 — Interest income": st.session_state.get("f65_k_interest", 0.0),
-            "6a — Ordinary dividends": st.session_state.get("f65_k_ord_div", 0.0),
-            "6b — Qualified dividends": st.session_state.get("f65_k_qual_div", 0.0),
-            "7 — Royalties": st.session_state.get("f65_k_royalties", 0.0),
-            "8 — Net STCG (loss)": st.session_state.get("f65_k_stcg", 0.0),
-            "9a — Net LTCG (loss)": st.session_state.get("f65_k_ltcg", 0.0),
-            "10 — Net §1231 gain (loss)": st.session_state.get("f65_k_1231", 0.0),
-            "12 — §179 deduction": st.session_state.get("f65_k_179", 0.0),
-            "13a — Charitable contributions": st.session_state.get("f65_k_charitable", 0.0),
-            "18a — Tax-exempt income": st.session_state.get("f65_k_taxexempt", 0.0),
-            "18b — Nondeductible expenses": st.session_state.get("f65_k_nonded", 0.0),
-            "19a — Distributions (cash)": st.session_state.get("f65_k_dist_cash", 0.0),
-            "19b — Distributions (property)": st.session_state.get("f65_k_dist_prop", 0.0),
-        }
+        K = f65_schedule_k()
+        _k_by_line = {ln: val for ln, _, val, _ in K["rows"]}
 
-        header = "| K-1 Line |" + "".join(f" {n} |" for n in names)
-        sep = "|---|" + "---|" * n_partners
-        rows = [header, sep]
-        for item, total in k_schedule.items():
-            if total != 0:
-                cells = "".join(f" ${total * r:,.0f} |" for r in ratios)
-                rows.append(f"| {item} |{cells}")
-        st.markdown("\n".join(rows))
-        st.caption("Each column = one partner Schedule K-1. Character of each item is preserved for the partner own return.")
+        st.markdown("### Part III — Partner's Share of Current Year Income, "
+                    "Deductions, Credits, and Other Items")
+        _boxes = [(ln, lbl, val) for ln, lbl, val, _ in K["rows"]
+                  if val and ln not in {"3a", "3b", "4a", "4b"}]
+        _hdr = ("<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                "<th style='padding:6px 8px;text-align:left;width:56px'>Box</th>"
+                "<th style='padding:6px 8px;text-align:left'>Item</th>"
+                + "".join(f"<th style='padding:6px 8px;text-align:right'>{x['name']}</th>"
+                          for x in PARTNERS)
+                + "<th style='padding:6px 8px;text-align:right'>Total</th></tr>")
+        _body = "".join(
+            f"<tr><td style='padding:5px 8px'>{ln}</td>"
+            f"<td style='padding:5px 8px'>{lbl}</td>"
+            + "".join(f"<td style='padding:5px 8px;text-align:right'>"
+                      f"{val * x['ratio']:,.0f}</td>" for x in PARTNERS)
+            + f"<td style='padding:5px 8px;text-align:right;font-weight:600'>{val:,.0f}</td></tr>"
+            for ln, lbl, val in _boxes)
+        st.markdown(f"<div style='overflow-x:auto'><table style='width:100%;"
+                    f"border-collapse:collapse;font-size:0.82rem'>{_hdr}{_body}"
+                    f"</table></div>", unsafe_allow_html=True)
 
+        st.markdown("### Part II — Information About the Partner")
+        for _p in PARTNERS:
+            _r = _p["ratio"]
+            _nr = st.session_state.get("f65_liab_nr", 0.0) * _r
+            _qn = st.session_state.get("f65_liab_qnre", 0.0) * _r
+            _rc = st.session_state.get("f65_liab_rec", 0.0) * _r
+            # Item L runs on §704(b) book figures: contributions and distributions at
+            # value, and the partner's share of the Analysis line.
+            _l_begin = st.session_state.get(f"f65_ca_begin_{_p['i']}", 0.0)
+            _l_contrib = st.session_state.get(f"f65_ca_contrib_{_p['i']}", 0.0)
+            _l_income = K["analysis"] * _r
+            _l_draw = ((st.session_state.get("f65_k_dist_cash", 0.0)
+                        + st.session_state.get("f65_k_dist_prop", 0.0)) * _r)
+            _l_end = _l_begin + _l_contrib + _l_income - _l_draw
 
+            with st.expander(f"**{_p['name']}** — Items J, K and L", expanded=True):
+                st.number_input("Item L — beginning capital account ($)", step=10_000.0,
+                                format="%.2f", key=f"f65_ca_begin_{_p['i']}")
+                st.number_input("Item L — capital contributed during the year ($)",
+                                min_value=0.0, step=10_000.0, format="%.2f",
+                                key=f"f65_ca_contrib_{_p['i']}")
+                st.markdown(
+                    f"<div style='overflow-x:auto'><table style='width:100%;"
+                    f"border-collapse:collapse;font-size:0.85rem'>"
+                    f"<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                    f"<th style='padding:6px 8px;text-align:left'>Item</th>"
+                    f"<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>J</b> — profit, loss and capital share</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_r:.1%}</td></tr>"
+                    f"<tr style='background:#eef2f7'><td style='padding:5px 8px'>"
+                    f"<b>K</b> — nonrecourse liabilities</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_nr:,.0f}</td></tr>"
+                    f"<tr style='background:#eef2f7'><td style='padding:5px 8px'>"
+                    f"<b>K</b> — qualified nonrecourse financing</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_qn:,.0f}</td></tr>"
+                    f"<tr style='background:#eef2f7'><td style='padding:5px 8px'>"
+                    f"<b>K</b> — recourse liabilities</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_rc:,.0f}</td></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>L</b> — beginning capital account</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_l_begin:,.0f}</td></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>L</b> — capital contributed</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_l_contrib:,.0f}</td></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>L</b> — current year net income (loss)</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>{_l_income:,.0f}</td></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>L</b> — withdrawals and distributions</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>({_l_draw:,.0f})</td></tr>"
+                    f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+                    f"<td style='padding:6px 8px'><b>L</b> — ending capital account</td>"
+                    f"<td style='padding:6px 8px;text-align:right'>{_l_end:,.0f}</td></tr>"
+                    f"</table></div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>Item K is not the same as Item L</b>, and the gap is the whole reason both "
+            "are printed. Item K liabilities give outside basis under §752 and never touch "
+            "the capital account; Item L is the economic capital that governs liquidation.",
+            "<span style='color:#C53030'>A partner can show a positive Item L and still have "
+            "no basis for losses, or a zero Item L and substantial basis from Item K debt. "
+            "Item L alone never tells you whether a loss is deductible.</span>",
+            "<b>Item L is reported on the tax basis</b> since 2020, which is a third measure "
+            "again — outside basis less the partner's share of liabilities.",
+            "<b>Items M and N</b> flag contributed property carrying built-in gain and the "
+            "partner's share of net unrecognised §704(c) gain or loss. Both are covered when "
+            "§704(c) is built out.",
+        ])
+
+    # PAGE: SCHEDULE M-1 AND M-2
+    elif f1065_section == "📚 Schedule M-1 & M-2 — Reconciliation":
+        st.markdown("## Schedule M-1 — Reconciliation of Income (Loss) per Books "
+                    "With Analysis of Net Income (Loss) per Return")
+        st.markdown(
+            "<div style='background:#FDECEA;border-left:5px solid #C53030;padding:12px 16px;"
+            "margin:8px 0;color:#7A1C1C;-webkit-text-fill-color:#7A1C1C;'>"
+            "<b>This reconciles to the Analysis of Net Income (Loss), not to taxable "
+            "income.</b> A partnership has no taxable income — §701 makes it a conduit. "
+            "The equivalent endpoint on Form 1120 is line 28; here it is the Analysis line "
+            "at the foot of Schedule K.</div>", unsafe_allow_html=True)
+
+        K65 = f65_schedule_k()
+        _gp65 = (st.session_state.get("f65_gp_services", 0.0)
+                 + st.session_state.get("f65_gp_capital", 0.0))
+        _texempt = st.session_state.get("f65_k_taxexempt", 0.0)
+
+        _m1c1, _m1c2 = st.columns(2)
+        with _m1c1:
+            st.markdown("**Additions**")
+            st.number_input("[Line 1] Net income (loss) per books ($)", step=10_000.0,
+                            format="%.2f", key="f65_m1_book")
+            st.number_input("[Line 2] Income on Schedule K not recorded on books ($)",
+                            min_value=0.0, step=1_000.0, format="%.2f", key="f65_m1_l2")
+            st.number_input("[Line 4a] Depreciation — book over tax ($)", min_value=0.0,
+                            step=1_000.0, format="%.2f", key="f65_m1_l4a")
+            st.number_input("[Line 4b] Travel and entertainment — disallowed ($)",
+                            min_value=0.0, step=1_000.0, format="%.2f", key="f65_m1_l4b")
+        with _m1c2:
+            st.markdown("**Subtractions**")
+            st.number_input("[Line 7a] Depreciation — tax over book ($)", min_value=0.0,
+                            step=1_000.0, format="%.2f", key="f65_m1_l7a")
+            st.caption("Line 3 (guaranteed payments) and line 6a (tax-exempt interest) "
+                       "are carried and cannot be typed here.")
+
+        _g = lambda k: st.session_state.get(k, 0.0)
+        _m1_l5 = _g("f65_m1_book") + _g("f65_m1_l2") + _gp65 + _g("f65_m1_l4a") + _g("f65_m1_l4b")
+        _m1_l8 = _texempt + _g("f65_m1_l7a")
+        _m1_l9 = _m1_l5 - _m1_l8
+        _m1_gap = _m1_l9 - K65["analysis"]
+
+        st.markdown(
+            f"<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+            f"<tr style='background:#EBF4FF;color:#1B3A6B'>"
+            f"<th style='padding:6px 8px;text-align:left;width:56px'>Line</th>"
+            f"<th style='padding:6px 8px;text-align:left'>Item</th>"
+            f"<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+            f"<tr><td style='padding:5px 8px'>1</td><td style='padding:5px 8px'>"
+            f"Net income (loss) per books</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_g('f65_m1_book'):,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>2</td><td style='padding:5px 8px'>"
+            f"Income on Schedule K not recorded on books</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_g('f65_m1_l2'):,.0f}</td></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>3</td>"
+            f"<td style='padding:5px 8px'>Guaranteed payments <i>(carried from page 1 line 10)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_gp65:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>4a</td><td style='padding:5px 8px'>"
+            f"Depreciation — book over tax</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_g('f65_m1_l4a'):,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>4b</td><td style='padding:5px 8px'>"
+            f"Travel and entertainment — disallowed</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_g('f65_m1_l4b'):,.0f}</td></tr>"
+            f"<tr style='font-weight:700'><td style='padding:5px 8px'>5</td>"
+            f"<td style='padding:5px 8px'>Add lines 1 through 4</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_m1_l5:,.0f}</td></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>6a</td>"
+            f"<td style='padding:5px 8px'>Tax-exempt interest <i>(carried from Schedule K line 18a)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_texempt:,.0f})</td></tr>"
+            f"<tr><td style='padding:5px 8px'>7a</td><td style='padding:5px 8px'>"
+            f"Depreciation — tax over book</td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_g('f65_m1_l7a'):,.0f})</td></tr>"
+            f"<tr style='font-weight:700'><td style='padding:5px 8px'>8</td>"
+            f"<td style='padding:5px 8px'>Add lines 6 and 7</td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_m1_l8:,.0f})</td></tr>"
+            f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+            f"<td style='padding:6px 8px'>9</td><td style='padding:6px 8px'>"
+            f"Income (loss) — line 5 less line 8</td>"
+            f"<td style='padding:6px 8px;text-align:right'>{_m1_l9:,.0f}</td></tr>"
+            f"</table></div>", unsafe_allow_html=True)
+
+        _mm1, _mm2, _mm3 = st.columns(3)
+        _mm1.metric("Schedule M-1 line 9", f"\\${_m1_l9:,.0f}")
+        _mm2.metric("Analysis of Net Income (Loss)", f"\\${K65['analysis']:,.0f}")
+        _mm3.metric("Difference", f"\\${_m1_gap:,.0f}",
+                    "reconciled" if abs(_m1_gap) < 1 else "must be zero")
+        if abs(_m1_gap) < 1:
+            st.success("Reconciled — Schedule M-1 line 9 equals the Analysis of Net "
+                       "Income (Loss).")
+        else:
+            st.error(f"**Out of balance by \\${_m1_gap:,.0f}.** Line 9 must equal the "
+                     f"Analysis line. Book income of "
+                     f"\\${_g('f65_m1_book') - _m1_gap:,.0f} would tie exactly.")
+
+        irc([
+            "<b>Why line 3 exists.</b> Guaranteed payments are an expense on the books, so "
+            "book income is already net of them. On the return they are deducted at page 1 "
+            "line 10 <i>and</i> reported again at Schedule K line 4, so the Analysis figure "
+            "includes them. Line 3 adds them back to bridge the two.",
+            "<b>§707(c) is the reason for the double appearance.</b> A guaranteed payment is "
+            "treated as made to someone who is not a partner — so the partnership deducts it "
+            "like any other payment for services or capital, and the recipient reports it as "
+            "ordinary income rather than as a distributive share.",
+            "<b>Tax-exempt interest is subtracted at 6a</b> because it is in book income but "
+            "is not part of the Analysis figure. It still increases the partner's outside "
+            "basis under §705(a)(1)(B) — a partnership item can be outside the Analysis and "
+            "still change basis.",
+        ])
+
+        st.markdown("## Schedule M-2 — Analysis of Partners' Capital Accounts")
+        PARTNERS65 = f65_partners()
+        _m2_begin = sum(st.session_state.get(f"f65_ca_begin_{x['i']}", 0.0)
+                        for x in PARTNERS65)
+        _m2_contrib = sum(st.session_state.get(f"f65_ca_contrib_{x['i']}", 0.0)
+                          for x in PARTNERS65)
+        _m2_dist_cash = _g("f65_k_dist_cash")
+        _m2_dist_prop = _g("f65_k_dist_prop")
+
+        _m2a, _m2b = st.columns(2)
+        _m2a.number_input("[Line 4] Other increases ($)", min_value=0.0, step=1_000.0,
+                          format="%.2f", key="f65_m2_other_inc")
+        _m2b.number_input("[Line 7] Other decreases ($)", min_value=0.0, step=1_000.0,
+                          format="%.2f", key="f65_m2_other_dec")
+
+        _m2_l5 = _m2_begin + _m2_contrib + K65["analysis"] + _g("f65_m2_other_inc")
+        _m2_l8 = _m2_dist_cash + _m2_dist_prop + _g("f65_m2_other_dec")
+        _m2_l9 = _m2_l5 - _m2_l8
+
+        # The sum of the partners' Item L ending balances, computed the same way the K-1
+        # page computes each one — so the two cannot disagree.
+        _itemL_total = sum(
+            st.session_state.get(f"f65_ca_begin_{x['i']}", 0.0)
+            + st.session_state.get(f"f65_ca_contrib_{x['i']}", 0.0)
+            + K65["analysis"] * x["ratio"]
+            - (_m2_dist_cash + _m2_dist_prop) * x["ratio"]
+            for x in PARTNERS65)
+
+        st.markdown(
+            f"<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+            f"<tr style='background:#EBF4FF;color:#1B3A6B'>"
+            f"<th style='padding:6px 8px;text-align:left;width:56px'>Line</th>"
+            f"<th style='padding:6px 8px;text-align:left'>Item</th>"
+            f"<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>1</td>"
+            f"<td style='padding:5px 8px'>Balance at beginning of year "
+            f"<i>(sum of Item L beginning)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_m2_begin:,.0f}</td></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>2</td>"
+            f"<td style='padding:5px 8px'>Capital contributed <i>(sum of Item L contributions)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_m2_contrib:,.0f}</td></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>3</td>"
+            f"<td style='padding:5px 8px'>Net income (loss) <i>(Analysis of Net Income)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>{K65['analysis']:,.0f}</td></tr>"
+            f"<tr><td style='padding:5px 8px'>4</td><td style='padding:5px 8px'>"
+            f"Other increases</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_g('f65_m2_other_inc'):,.0f}</td></tr>"
+            f"<tr style='font-weight:700'><td style='padding:5px 8px'>5</td>"
+            f"<td style='padding:5px 8px'>Add lines 1 through 4</td>"
+            f"<td style='padding:5px 8px;text-align:right'>{_m2_l5:,.0f}</td></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>6a</td>"
+            f"<td style='padding:5px 8px'>Distributions — cash <i>(Schedule K line 19a)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_m2_dist_cash:,.0f})</td></tr>"
+            f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>6b</td>"
+            f"<td style='padding:5px 8px'>Distributions — property <i>(Schedule K line 19b)</i></td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_m2_dist_prop:,.0f})</td></tr>"
+            f"<tr><td style='padding:5px 8px'>7</td><td style='padding:5px 8px'>"
+            f"Other decreases</td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_g('f65_m2_other_dec'):,.0f})</td></tr>"
+            f"<tr style='font-weight:700'><td style='padding:5px 8px'>8</td>"
+            f"<td style='padding:5px 8px'>Add lines 6 and 7</td>"
+            f"<td style='padding:5px 8px;text-align:right'>({_m2_l8:,.0f})</td></tr>"
+            f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+            f"<td style='padding:6px 8px'>9</td><td style='padding:6px 8px'>"
+            f"Balance at end of year</td>"
+            f"<td style='padding:6px 8px;text-align:right'>{_m2_l9:,.0f}</td></tr>"
+            f"</table></div>", unsafe_allow_html=True)
+
+        _m2_gap = _m2_l9 - _itemL_total
+        _n1, _n2, _n3 = st.columns(3)
+        _n1.metric("Schedule M-2 line 9", f"\\${_m2_l9:,.0f}")
+        _n2.metric("Sum of every Item L ending", f"\\${_itemL_total:,.0f}")
+        _n3.metric("Difference", f"\\${_m2_gap:,.0f}",
+                   "reconciled" if abs(_m2_gap) < 1 else "must be zero")
+        if abs(_m2_gap) < 1:
+            st.success("Reconciled — Schedule M-2 equals the sum of the partners' "
+                       "Item L capital accounts.")
+        else:
+            st.error(f"**Out of balance by \\${_m2_gap:,.0f}.** Schedule M-2 is the "
+                     f"partnership-level view of the same capital accounts reported "
+                     f"partner by partner at Item L, so the two must agree.")
+
+        irc([
+            "<b>Schedule M-2 is Item L viewed from the partnership.</b> Every line here is "
+            "the total of the corresponding Item L line across all partners, which is why "
+            "the two are checked against each other rather than entered twice.",
+            "<b>Since 2020 both are reported on the tax basis method.</b> That is a third "
+            "measure again — a partner's outside basis less their share of partnership "
+            "liabilities. It is not the §704(b) book capital account and it is not outside "
+            "basis, and mixing the three up is the usual source of an M-2 that will not tie.",
+            "<span style='color:#C53030'>Distributions reduce capital at <b>value</b>, while "
+            "the same distribution reduces outside basis by the partnership's <b>adjusted "
+            "basis</b> in the property under §732. Distributing appreciated property "
+            "therefore moves M-2 and outside basis by different amounts.</span>",
+        ])
 
     elif f1065_section == "🧮 Outside Basis & Loss Limitations":
         st.markdown("## Outside Basis, Capital Account and the Loss Limitations")
