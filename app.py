@@ -8,6 +8,30 @@ from calculators.form_1120 import (calculate_1120, calc_drd_246b,
                                    calc_1062_deferral, calc_6655_penalty)
 from calculators.form_1065 import (calc_752_shares, calc_outside_basis,
                                    calc_capital_account, calc_loss_limitations)
+from calculators.form_1065_formation import (calc_721_contribution, calc_724_taint,
+                                             calc_disguised_sale, calc_holding_period,
+                                             calc_item_n, calc_services_interest)
+from calculators.form_1065_distributions import (calc_704c_1b, calc_735_character,
+                                                 calc_751b_flag,
+                                                 calc_current_distribution)
+from calculators.form_1065_liquidation import (calc_736_split, calc_736a_character,
+                                               calc_liquidating_distribution)
+from calculators.form_1065_754 import (CAPITAL as C754, ORDINARY as O754, calc_734b,
+                                       calc_743b as calc_743b_full, calc_755_734b,
+                                       calc_755_743b, calc_previously_taxed_capital,
+                                       calc_substantial_basis_reduction,
+                                       calc_substantial_built_in_loss)
+from calculators.form_1065_sale import (HOT_CLASSES as HOT_LABELS, calc_704c_transfer,
+                                        calc_743b,
+                                        calc_751a_ordinary, calc_amount_realized,
+                                        calc_buyer_basis, calc_sale_of_interest)
+from calculators.tax_lines import (TAX_LINES, BALANCE_SHEET_SECTIONS, CONTRA_CODES,
+                                   check_trial_balance, map_trial_balance)
+from calculators.trial_balance import read_trial_balance
+from calculators.schedule_l import (CLOSING_EQUITY, TOTAL_LINES, calc_m2_1065,
+                                    calc_m2_1120, spec as _sched_l_spec,
+                                    totals as sched_l_totals)
+sched_l_spec = _sched_l_spec
 
 st.set_page_config(
     page_title="Form 1120 Tax Calculator",
@@ -164,6 +188,8 @@ components.html("""
     }
     hr { border:none; border-top:1px solid #CBD5E0; margin:16px 0; }
     .adj-auto  { font-size:0.8rem; color:var(--c-rule) !important; padding:4px 0 2px 0; font-style:italic; }
+    .sl-line   { font-size:0.85rem; padding:9px 0 2px 0; }
+    .sl-line b { display:inline-block; min-width:2.6rem; color:var(--c-rule); }
     .adj-label { font-size:0.8rem; color:#718096 !important; padding:4px 0 2px 0; }
     .stExpander summary p, .stExpander summary span { color:var(--c-heading) !important; }
     div[role="tab"],
@@ -325,6 +351,29 @@ DEFAULTS = {
     "p_begin_ca": 0.0, "p_book_income": 0.0, "p_book_loss": 0.0, "p_distrib_fmv": 0.0,
     "f65_m1_book": 0.0, "f65_m1_l2": 0.0, "f65_m1_l4a": 0.0, "f65_m1_l4b": 0.0,
     "f65_m1_l7a": 0.0, "f65_m2_other_inc": 0.0, "f65_m2_other_dec": 0.0,
+    # Formation questionnaire — Schedule B in shape: a Yes opens the section it gates.
+    "f65_q_contrib": "No", "f65_q_property": "No", "f65_q_liab": "No",
+    "f65_q_services": "No", "f65_q_dist2y": "No", "f65_q_invco": "No",
+    # Distribution questionnaire.
+    "f65_qd_any": "No", "f65_qd_property": "No", "f65_qd_liab": "No",
+    "f65_qd_7yr": "No", "f65_qd_contributed_out": "No", "f65_qd_hot": "No",
+    "f65_d_years_since": 0, "f65_d_contrib_out_years": 0,
+    # Sale of an interest.
+    "f65_qs_any": "No", "f65_qs_hot": "No", "f65_qs_754": "No", "f65_qs_sbil": "No",
+    "f65_qs_foreign": "No", "f65_s_seller": 0, "f65_s_buyer": 1,
+    "f65_s_cash": 0.0, "f65_s_prop": 0.0, "f65_s_relief": 0.0, "f65_s_basis": 0.0,
+    "f65_s_months": 0, "f65_s_inside": 0.0,
+    # §754 election and the basis adjustments it switches on.
+    "f65_754": "No", "f65_q754_transfer": "No", "f65_q754_dist": "No",
+    "f65_754_hyp_cash": 0.0, "f65_754_hyp_loss": 0.0, "f65_754_hyp_gain": 0.0,
+    "f65_754_liab_share": 0.0, "f65_754_inside_basis": 0.0, "f65_754_fmv": 0.0,
+    "f65_754_transferee_loss": 0.0, "f65_754_dist_class": "capital",
+    "f65_754_n_assets": 2,
+    # Liquidation of a retiring partner's interest.
+    "f65_ql_any": "No", "f65_ql_service": "No", "f65_ql_gp": "No",
+    "f65_ql_goodwill_agmt": "No", "f65_ql_income_geared": "No", "f65_ql_property": "No",
+    "f65_l_partner": 0, "f65_l_total": 0.0, "f65_l_recv": 0.0, "f65_l_goodwill": 0.0,
+    "f65_l_other_prop": 0.0, "f65_l_basis": 0.0, "f65_l_cash": 0.0, "f65_l_relief": 0.0,
     # CAMT / BEAT
     "afsi": 0.0, "avg_afsi_3yr": 0.0,
     "avg_gross_receipts_3yr": 0.0,
@@ -337,10 +386,20 @@ DEFAULTS = {
     "prior_overpayment": 0.0,
     # M-1
     "book_income": 0.0,
+    # M-2 — Analysis of Unappropriated Retained Earnings
+    "m2_other_inc": 0.0, "m2_dist_cash": 0.0, "m2_dist_stock": 0.0,
+    "m2_dist_prop": 0.0, "m2_other_dec": 0.0,
     # M-3
     "total_assets": 0.0,
     "worldwide_book_income": 0.0,
 }
+
+# Schedule L, both forms. Every line has a beginning and an ending column, and the two
+# balance sheets never share a field, so they are generated rather than listed.
+for _f in ("1120", "1065"):
+    for _c, _ln, _lab, _key, _sec, _contra in _sched_l_spec(_f):
+        DEFAULTS[_key] = 0.0
+        DEFAULTS[_key + "_beg"] = 0.0
 
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -358,9 +417,9 @@ if st.session_state.pop("_theme_reset", False):
 # Button keys reject a pre-set value at st.button() time; add any new one here.
 BUTTON_KEYS = {"rc_loss_to_line9", "rc_to_cap", "rc_to_other",
                "sd_lb_to_l9", "roll_forward_btn", "export_btn", "import_btn",
-               "theme_reset"}
+               "theme_reset", "tb_post_1120", "tb_post_1065"}
 # Widgets whose value is not JSON-serialisable and must never be saved or restored.
-NON_PORTABLE_KEYS = {"import_file"}
+NON_PORTABLE_KEYS = {"import_file", "tb_up_1120", "tb_up_1065"}
 
 SAVE_MARKER = "form-1120-calculator"
 SAVE_SCHEMA = 1
@@ -416,7 +475,8 @@ STANDING_KEYS = {
     "theme_font", "theme_font_name", "theme_size",
 } | set(THEME_DEFAULTS)
 # Prefixes whose keys hold prior-year history and must never be zeroed.
-KEEP_PREFIXES = ("sd_cf_loss_", "f4797_lb_loss_", "f4797_lb_recap_",
+KEEP_PREFIXES = ("sl_", "f65_sl_",
+                 "sd_cf_loss_", "f4797_lb_loss_", "f4797_lb_recap_",
                  "f4797_desc_", "f4797_type_", "nol_year_", "nol_amt_",
                  "gbc_year_", "gbc_amt_", "f1062_year_", "f1062_amt_")
 # Prefixes of current-year amount fields that are not declared in DEFAULTS.
@@ -496,6 +556,15 @@ if _rp:
     # 3. Estimated-tax basis for the new year.
     st.session_state["prior_year_tax"] = _rp["total_tax"]
     st.session_state["prior_overpayment"] = _rp["overpay_credit"]
+
+    # 3a. The balance sheet rolls rather than resets: this year's close is next year's
+    # open. Closing equity is the M-2 result, which is why it is carried in explicitly —
+    # there is no widget holding it.
+    for _f_r in ("1120", "1065"):
+        _close_r = CLOSING_EQUITY[_f_r]
+        for _c_r, _ln_r, _lab_r, _k_r, _sec_r, _contra_r in _sched_l_spec(_f_r):
+            st.session_state[_k_r + "_beg"] = st.session_state.get(_k_r, 0.0)
+    st.session_state["sl_retained_beg"] = _rp["m2_line8"]
 
     # 4. Advance the year and record the close so it cannot be run twice.
     st.session_state["tax_year"] = _ny_r
@@ -631,9 +700,11 @@ with st.sidebar:
             "🏭 Form 4797 — Business Property",
             "🧮 Schedule J — Tax Computation",
             "📅 Estimated Tax & Safe Harbor",
-            "📚 Schedule M-1",
+            "🏦 Schedule L — Balance Sheets",
+            "📚 Schedule M-1 & M-2",
             "📊 Schedule M-3",
             "📈 Results Summary",
+            "📂 Trial Balance Import",
         ], label_visibility="collapsed", on_change=_reset_topic)
         st.markdown("---")
         st.markdown("### 🏛️ Tax Topics")
@@ -648,12 +719,19 @@ with st.sidebar:
         st.markdown("### 🤝 Form 1065")
         f1065_nav = st.radio("Navigate", [
             "📖 Overview",
+            "📐 Formation & Contributions — §721",
             "📥 Income (Lines 1–8)",
             "📤 Deductions (Lines 9–22)",
             "📋 Schedule K — Distributive Share Items",
             "🧾 Schedule K-1 — Per Partner Summary",
             "📚 Schedule M-1 & M-2 — Reconciliation",
             "🧮 Outside Basis & Loss Limitations",
+            "💸 Current Distributions — §731/§732",
+            "🏁 Liquidating a Partner — §736",
+            "🤝 Sale of an Interest — §741/§751",
+            "⚖️ §754 Election — §743(b) & §734(b)",
+            "🏦 Schedule L — Balance Sheets",
+            "📂 Trial Balance Import",
         ], label_visibility="collapsed", key="f1065_nav")
 
 def irc(items):
@@ -1419,6 +1497,42 @@ M1 = m1_lines()
 M3 = m3_lines()
 
 
+def m2_1120():
+    """Schedule M-2, computed in the shared pass because Schedule L carries line 8 into
+    the closing retained earnings and the integrity check reads both."""
+    g = lambda k: st.session_state.get(k, 0.0)
+    return calc_m2_1120(
+        beginning=g("sl_retained_beg"),
+        net_income_per_books=M1["l1"],
+        other_increases=g("m2_other_inc"),
+        dist_cash=g("m2_dist_cash"), dist_stock=g("m2_dist_stock"),
+        dist_property=g("m2_dist_prop"), other_decreases=g("m2_other_dec"))
+
+
+M2 = m2_1120()
+
+
+
+def sched_l_values(form, column, closing=None):
+    """The Schedule L column as a dict of key to amount.
+
+    Pass `closing` to have the M-2 analysis supply the closing equity line instead of a
+    widget: on Form 1120 the ending balance of retained earnings is not an independent
+    fact, it is what the year's activity produced. On Form 1065 it is left typed, because
+    Item L and M-2 report capital on the tax basis while Schedule L reports the books —
+    forcing those two to agree would hide a difference the preparer has to be able to
+    explain."""
+    suffix = "" if column == "ending" else "_beg"
+    vals = {key: st.session_state.get(key + suffix, 0.0)
+            for _c, _ln, _lab, key, _sec, _contra in sched_l_spec(form)}
+    if column == "ending" and closing is not None:
+        vals[CLOSING_EQUITY[form]] = closing
+    return vals
+
+
+SL_END = sched_l_totals("1120", sched_l_values("1120", "ending", M2["line8"]))
+
+
 def return_checks():
     """The gate. Each reconciliation must land on Form 1120 line 28, and every schedule
     that feeds page 1 must agree with the line it feeds. A tolerance of $1 absorbs
@@ -1474,6 +1588,18 @@ def return_checks():
             f"${R1120['deductions']['cogs']:,.0f}"),
         chk("Line 28 \u2212 29a \u2212 29b = line 30", l28 - l29a - l29b if l28 - l29a - l29b > 0 else 0.0, l30,
             f"${l28:,.0f} \u2212 ${l29a:,.0f} \u2212 ${l29b:,.0f} = ${l30:,.0f}"),
+        # The balance sheet is the only part of the return arithmetic can falsify. Closing
+        # retained earnings is carried from M-2, so this check is not circular: it asks
+        # whether book income and the distributions actually describe what the assets and
+        # liabilities did. Skipped when no balance sheet has been entered.
+        chk("Schedule L balances \u2014 assets = liabilities + equity",
+            SL_END["total_assets"], SL_END["total_liab_equity"],
+            f"Assets ${SL_END['total_assets']:,.0f} vs liabilities and equity "
+            f"${SL_END['total_liab_equity']:,.0f}",
+            active=abs(SL_END["total_assets"]) > 0.5 or abs(SL_END["total_liab_equity"]) > 0.5),
+        chk("Schedule M-2 line 2 = Schedule M-1 line 1", M2["line2"], M1["l1"],
+            f"Net income per books ${M2['line2']:,.0f} \u2014 M-2 reports the book figure, "
+            f"never taxable income"),
     ]
     failed = [r for r in rows if r["state"] == "fail"]
     return {"rows": rows, "failed": failed, "required": required,
@@ -1542,9 +1668,271 @@ if topic is not None:
     section = None   # suppress 1120 pages
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SCHEDULE L — BALANCE SHEETS PER BOOKS
+# ─────────────────────────────────────────────────────────────────────────────
+def render_schedule_l(which, closing=None, closing_label=""):
+    """Schedule L for either form.
+
+    `closing` is the equity figure the M-2 analysis produced. It is passed in rather than
+    typed, which is what makes the balance check worth anything: if book income or the
+    distributions are wrong, the balance sheet stops balancing instead of being forced to
+    agree by a figure keyed to make it agree."""
+    rows = sched_l_spec(which)
+    close_key = CLOSING_EQUITY[which]
+    t_assets, t_liab = TOTAL_LINES[which]
+
+    st.title(f"Schedule L — Balance Sheets per Books (Form {which})")
+    st.caption("Book figures, not tax. Schedule L reports the balance sheet as the books "
+               "carry it; the differences between that and the return are what "
+               + ("Schedules M-1 and M-3 reconcile." if which == "1120"
+                  else "Schedule M-1 reconciles.")
+               + " Both columns must balance — the beginning column is last year's close.")
+
+    beg_vals = sched_l_values(which, "beginning")
+    end_vals = sched_l_values(which, "ending", closing)
+    tb, te = sched_l_totals(which, beg_vals), sched_l_totals(which, end_vals)
+
+    h0, h1, h2 = st.columns([6, 3, 3])
+    h0.markdown("### Assets")
+    h1.markdown("**Beginning of year**")
+    h2.markdown("**End of year**")
+    section_now = "asset"
+    for code, line, label, key, section, contra in rows:
+        if section != section_now and section == "liability":
+            st.markdown("### Liabilities and "
+                        + ("Shareholders' Equity" if which == "1120" else "Capital"))
+        section_now = section
+        c0, c1, c2 = st.columns([6, 3, 3])
+        c0.markdown(f"<div class='sl-line'><b>{line}</b> &nbsp; {label}</div>",
+                    unsafe_allow_html=True)
+        if key == close_key and closing is not None:
+            # Carried, not typed: the ending column is this year's M-2 result.
+            c1.markdown(f"<div class='adj-auto'>${beg_vals[key]:,.0f}</div>",
+                        unsafe_allow_html=True)
+            c2.markdown(f"<div class='adj-auto'>${end_vals[key]:,.0f} — from M-2</div>",
+                        unsafe_allow_html=True)
+            continue
+        c1.number_input(f"{line} beginning", step=1_000.0, format="%.2f",
+                        key=key + "_beg", label_visibility="collapsed")
+        c2.number_input(f"{line} ending", step=1_000.0, format="%.2f",
+                        key=key, label_visibility="collapsed")
+
+    st.markdown("---")
+    m = st.columns(4)
+    m[0].metric(f"Total assets (line {t_assets})", f"${te['total_assets']:,.0f}",
+                f"was ${tb['total_assets']:,.0f}")
+    m[1].metric(f"Total liabilities and {'equity' if which == '1120' else 'capital'} "
+                f"(line {t_liab})", f"${te['total_liab_equity']:,.0f}",
+                f"was ${tb['total_liab_equity']:,.0f}")
+    m[2].metric("Beginning of year", "Balanced" if tb["balanced"]
+                else f"Out by ${tb['difference']:,.0f}",
+                delta_color="off")
+    m[3].metric("End of year", f"${te['difference']:,.0f}",
+                "Balanced" if te["balanced"] else "Does not balance",
+                delta_color="normal" if te["balanced"] else "inverse")
+
+    if te["balanced"]:
+        st.success(f"Schedule L balances. {closing_label}")
+    elif which == "1120":
+        st.error(f"**Out of balance by \\${te['difference']:,.0f}.** Closing retained "
+                 f"earnings is carried from the M-2 analysis, so this difference is real: "
+                 f"either an asset or liability is missing or wrong, or the book income "
+                 f"and distributions feeding M-2 do not describe what the balance sheet "
+                 f"says happened.")
+    else:
+        st.error(f"**Out of balance by \\${te['difference']:,.0f}.** Assets must equal "
+                 f"liabilities plus partners' capital. A common cause is importing a "
+                 f"trial balance taken before the books were closed: line 21 then still "
+                 f"carries last year's capital, short by this year's result.")
+    return {"beginning": tb, "ending": te}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRIAL BALANCE IMPORT
+# ─────────────────────────────────────────────────────────────────────────────
+def render_tb_import(which):
+    """Import a trial balance and post it to the return.
+
+    Shared by both forms because the mechanics are identical — only the set of tax codes
+    on offer differs. Nothing is written to the return until the user presses Post: an
+    import that silently overwrote typed figures would be worse than no import at all."""
+    forms = ({"1120", "1125-A", "Sch L", "Sch M-2"} if which == "1120"
+             else {"1065", "Sch K", "Sch L (1065)"})
+    lines = [r for r in TAX_LINES if r[1] in forms]
+
+    st.title(f"Trial Balance Import — Form {which}")
+    st.caption("Give every ledger account a tax code, upload the trial balance, and the "
+               "return picks up the figures. This is how a real return is prepared: the "
+               "chart of accounts carries the tax line assignment, and the preparer works "
+               "on the exceptions rather than retyping the ledger.")
+
+    tab_up, tab_codes = st.tabs(["📤 Upload", "📖 Tax Code Reference"])
+
+    with tab_codes:
+        st.markdown("#### Tax codes for this form")
+        st.caption("Put the code in a column named Tax Code. One account may feed several "
+                   "lines — write `C-26t:60,C-26m:30,C-26e:10` to split an account by "
+                   "percentage, which is what a combined Travel & Entertainment account "
+                   "needs, since each piece meets a different rule.")
+        st.dataframe(
+            [{"Code": c, "Form": f, "Line": ln, "Description": lab} for c, f, ln, lab, *_ in lines],
+            use_container_width=True, hide_index=True)
+        template = "Account,Account Name,Tax Code,Beginning Balance,Ending Balance\n" + \
+                   "".join(f"{i + 1000},{lab},{c},0.00,0.00\n"
+                           for i, (c, f, ln, lab, *_) in enumerate(lines))
+        st.download_button("⬇️ Download a blank template", template,
+                           file_name=f"trial-balance-template-{which}.csv", mime="text/csv")
+
+    with tab_up:
+        up = st.file_uploader("Trial balance (CSV or Excel)",
+                              type=["csv", "xlsx", "xlsm", "xls"], key=f"tb_up_{which}")
+        if up is None:
+            st.info("Balances are read debit-positive: expenses and assets positive, "
+                    "revenue, liabilities and equity negative. Separate Debit and Credit "
+                    "columns work too. A Beginning Balance column is only needed for "
+                    "Schedule L.")
+            st.caption("Excel files are read from the first worksheet, with the first row "
+                       "as the header. A working paper with a title block, merged headers "
+                       "or subtotal rows will not read cleanly — strip it to a flat table, "
+                       "or save that sheet as CSV.")
+            return
+
+        rows, cols, warnings = read_trial_balance(up.getvalue(), up.name)
+        st.markdown("#### 1 · Columns read")
+        st.caption("Check this before anything else — a misread column is a wrong return.")
+        st.dataframe([{"Meaning": k, "Column in your file": v} for k, v in cols.items()],
+                     use_container_width=True, hide_index=True)
+        for w in warnings:
+            st.warning(w)
+        if not rows:
+            return
+
+        st.markdown("#### 2 · Does it balance?")
+        has_beg = "beginning" in cols
+        cbal = st.columns(2 if has_beg else 1)
+        for col, which_col, title in zip(cbal, (["beginning", "ending"] if has_beg else ["ending"]),
+                                         (["Beginning of year", "End of year"] if has_beg else ["End of year"])):
+            chk = check_trial_balance(rows, which_col)
+            col.metric(title, f"${chk['debits']:,.0f}",
+                       "In balance" if chk["balanced"] else f"Out by ${chk['difference']:,.2f}",
+                       delta_color="normal" if chk["balanced"] else "inverse")
+        if not check_trial_balance(rows, "ending")["balanced"]:
+            st.error("The trial balance does not balance. Mapping it would only spread the "
+                     "error across the return — fix the extract first.")
+
+        st.markdown("#### 3 · Mapping")
+        allowed = {r[0] for r in lines}
+        res = map_trial_balance(rows, "ending")
+        beg = map_trial_balance(rows, "beginning") if has_beg else {"mapped": {}}
+
+        posted, foreign = [], []
+        for key, d in res["detail"].items():
+            row = {"Code": d["code"], "Tax line": d["label"],
+                   "Accounts": len(d["accounts"]),
+                   "Trial balance": sum(a["balance"] for a in d["accounts"]),
+                   "Posted to return": res["mapped"][key]}
+            (posted if d["code"] in allowed else foreign).append(row)
+
+        st.dataframe(posted, use_container_width=True, hide_index=True,
+                     column_config={
+                         "Trial balance": st.column_config.NumberColumn(format="$%.0f"),
+                         "Posted to return": st.column_config.NumberColumn(format="$%.0f")})
+        st.caption("Trial balance is the debit-positive balance as filed; Posted to return "
+                   "is the same figure in the sign the form prints.")
+
+        if foreign:
+            st.info(f"{len(foreign)} account group(s) carry codes belonging to the other "
+                    "form and will not be posted here.")
+        if res["unknown_codes"]:
+            st.error(f"{len(res['unknown_codes'])} account(s) carry a code that does not "
+                     "exist. They are listed below and will not be posted.")
+            st.dataframe([{"Account": r["account"], "Name": r["name"], "Code": r["code"]}
+                          for r in res["unknown_codes"]],
+                         use_container_width=True, hide_index=True)
+        if res["unmapped"]:
+            st.warning(f"{len(res['unmapped'])} account(s) have no tax code. Nothing is "
+                       "guessed — add a code to the file and upload again.")
+            st.dataframe([{"Account": r["account"], "Name": r["name"],
+                           "Ending balance": r["ending"]} for r in res["unmapped"]],
+                         use_container_width=True, hide_index=True)
+
+        # A trial balance taken before the books are closed leaves the year's result
+        # sitting in the income and expense accounts, so equity is still last year's and
+        # the balance sheet is short by exactly the book result. That identity ties the two
+        # halves of the import together, and it is checkable before anything is posted.
+        sl = [r for r in lines if r[6] in BALANCE_SHEET_SECTIONS]
+        if any(r[4] in res["mapped"] for r in sl):
+            st.markdown("#### 4 · Does the balance sheet hang together?")
+            sides = {"asset": 0.0, "liability": 0.0, "equity": 0.0}
+            for c, f, ln, lab, key, sign, sec in sl:
+                sides[sec] += res["mapped"].get(key, 0.0) * (-1 if c in CONTRA_CODES else 1)
+            book_net, dist = 0.0, 0.0
+            for c, f, ln, lab, key, sign, sec in lines:
+                if key not in res["mapped"]:
+                    continue
+                if sec == "distribution":
+                    dist += res["mapped"][key]
+                elif sec in ("income", "cogs", "deduction"):
+                    w = -1 if c in CONTRA_CODES else 1
+                    book_net += res["mapped"][key] * w * (1 if sec == "income" else -1)
+            # Dividends or partner draws usually sit in their own clearing account, which
+            # closes to equity alongside the year's result. Both are still open, so both
+            # belong on this side of the identity.
+            gap = sides["asset"] - sides["liability"] - sides["equity"]
+            resid = gap - (book_net - dist)
+            lc = st.columns(5 if dist else 4)
+            lc[0].metric("Total assets", f"${sides['asset']:,.0f}")
+            lc[1].metric("Total liabilities and equity",
+                         f"${sides['liability'] + sides['equity']:,.0f}")
+            lc[2].metric("Book net income (still open)", f"${book_net:,.0f}")
+            if dist:
+                lc[3].metric("Distributions (still open)", f"${dist:,.0f}")
+            lc[-1].metric("Unexplained", f"${resid:,.0f}",
+                          "Ties" if abs(resid) < 0.5 else "Does not tie",
+                          delta_color="normal" if abs(resid) < 0.5 else "inverse")
+            if abs(resid) >= 0.5:
+                st.error("Assets less liabilities and equity should equal the book result "
+                         "still sitting in the income and expense accounts, less any "
+                         "distributions still in their own account. It does not, so an "
+                         "account has been coded to the wrong side.")
+            st.caption("The balance sheet itself is on the Schedule L page."
+                       + (" Closing retained earnings is not imported there — it is "
+                          "carried from the M-2 analysis." if which == "1120" else
+                          " Closing partners' capital is imported as the book figure and "
+                          "reconciled to the tax-basis capital from Item L."))
+
+        st.markdown("#### 5 · Post to the return")
+        # On Form 1120 closing retained earnings is produced by the M-2 analysis, so only
+        # its opening balance is imported — the ending figure in a pre-closing trial
+        # balance is last year's anyway. A partnership's Schedule L capital is the book
+        # figure and has no such source, so it is imported like any other line.
+        closing = CLOSING_EQUITY[which] if which == "1120" else None
+        to_post = {k: v for k, v in res["mapped"].items()
+                   if k != closing and any(r[4] == k and r[0] in allowed for r in lines)}
+        beg_post = {k + "_beg": v for k, v in beg["mapped"].items()
+                    if any(r[4] == k and r[0] in allowed and r[6] in BALANCE_SHEET_SECTIONS
+                           for r in lines)}
+        overwrites = [k for k in to_post if float(st.session_state.get(k, 0) or 0) not in (0.0,)
+                      and abs(float(st.session_state.get(k, 0) or 0) - to_post[k]) > 0.005]
+        if overwrites:
+            st.warning(f"{len(overwrites)} field(s) already hold a different figure and "
+                       "will be overwritten: " + ", ".join(sorted(overwrites)[:8]) +
+                       ("…" if len(overwrites) > 8 else ""))
+        if st.button(f"📥 Post {len(to_post)} figure(s) to Form {which}",
+                     type="primary", key=f"tb_post_{which}"):
+            st.session_state.update(to_post)
+            st.session_state.update(beg_post)
+            st.success(f"Posted. Open the income and deduction pages to review — imported "
+                       "figures behave exactly like typed ones and can be edited.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PAGE 1 — INCOME
 # ─────────────────────────────────────────────────────────────────────────────
-if section == "📥 Page 1 — Income":
+if section == "📂 Trial Balance Import":
+    render_tb_import("1120")
+
+elif section == "📥 Page 1 — Income":
     # Transfer staging keys must be applied before any widget renders
     for _src, _dst in [("_transfer_other", "other_income_book"), ("_transfer_4797", "gain_4797_book")]:
         if _src in st.session_state:
@@ -4238,7 +4626,13 @@ elif section == "📅 Estimated Tax & Safe Harbor":
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEDULE M-1
 # ─────────────────────────────────────────────────────────────────────────────
-elif section == "📚 Schedule M-1":
+elif section == "🏦 Schedule L — Balance Sheets":
+    render_schedule_l(
+        "1120", closing=M2["line8"],
+        closing_label="Retained earnings closed at "
+                      + f"\\${M2['line8']:,.0f} on Schedule M-2 line 8.")
+
+elif section == "📚 Schedule M-1 & M-2":
     st.title("Schedule M-1 — Book-Tax Reconciliation")
     st.caption("Required for corporations with total assets < $10M. Reconciles net income per books to Form 1120 line 28 — taxable income *before* the NOL deduction and special deductions.")
 
@@ -4403,6 +4797,89 @@ elif section == "📚 Schedule M-1":
 """)
         st.info("The DRD and §250 deduction never appear on Schedule M-1. They are neither permanent nor temporary "
                 "book-tax differences — they are statutory deductions taken after line 28.")
+
+    st.markdown("---")
+    st.markdown("## Schedule M-2 — Analysis of Unappropriated Retained Earnings per Books")
+    st.caption("Prints on the same page of the return as M-1, and answers a different "
+               "question. M-1 reconciles book income to taxable income for the year; M-2 "
+               "reconciles the equity account from one balance sheet date to the next.")
+
+    _m2c1, _m2c2 = st.columns(2)
+    _m2c1.number_input(L("1", "Balance at beginning of year — Schedule L line 25"),
+                       step=1_000.0, format="%.2f", key="sl_retained_beg")
+    _m2c2.number_input(L("3", "Other increases"), min_value=0.0, step=1_000.0,
+                       format="%.2f", key="m2_other_inc")
+    _m2d1, _m2d2, _m2d3, _m2d4 = st.columns(4)
+    _m2d1.number_input(L("5a", "Distributions — cash"), min_value=0.0, step=1_000.0,
+                       format="%.2f", key="m2_dist_cash")
+    _m2d2.number_input(L("5b", "Distributions — stock"), min_value=0.0, step=1_000.0,
+                       format="%.2f", key="m2_dist_stock")
+    _m2d3.number_input(L("5c", "Distributions — property"), min_value=0.0, step=1_000.0,
+                       format="%.2f", key="m2_dist_prop")
+    _m2d4.number_input(L("6", "Other decreases"), min_value=0.0, step=1_000.0,
+                       format="%.2f", key="m2_other_dec")
+
+    _m2r = calc_m2_1120(
+        beginning=st.session_state.get("sl_retained_beg", 0.0),
+        net_income_per_books=M1["l1"],
+        other_increases=st.session_state.get("m2_other_inc", 0.0),
+        dist_cash=st.session_state.get("m2_dist_cash", 0.0),
+        dist_stock=st.session_state.get("m2_dist_stock", 0.0),
+        dist_property=st.session_state.get("m2_dist_prop", 0.0),
+        other_decreases=st.session_state.get("m2_other_dec", 0.0))
+
+    st.markdown(
+        "<div style='overflow-x:auto'><table style='width:100%;border-collapse:collapse;font-size:0.85rem'>"
+        "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+        "<th style='padding:6px 8px;text-align:left;width:56px'>Line</th>"
+        "<th style='padding:6px 8px;text-align:left'>Item</th>"
+        "<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+        f"<tr><td style='padding:5px 8px'>1</td><td style='padding:5px 8px'>"
+        f"Balance at beginning of year</td>"
+        f"<td style='padding:5px 8px;text-align:right'>{_m2r['line1']:,.0f}</td></tr>"
+        f"<tr style='background:#eef2f7;font-weight:600'><td style='padding:5px 8px'>2</td>"
+        f"<td style='padding:5px 8px'>Net income (loss) per books "
+        f"<i>(same figure as M-1 line 1)</i></td>"
+        f"<td style='padding:5px 8px;text-align:right'>{_m2r['line2']:,.0f}</td></tr>"
+        f"<tr><td style='padding:5px 8px'>3</td><td style='padding:5px 8px'>Other increases</td>"
+        f"<td style='padding:5px 8px;text-align:right'>{_m2r['line3']:,.0f}</td></tr>"
+        f"<tr style='font-weight:700'><td style='padding:5px 8px'>4</td>"
+        f"<td style='padding:5px 8px'>Add lines 1, 2 and 3</td>"
+        f"<td style='padding:5px 8px;text-align:right'>{_m2r['line4']:,.0f}</td></tr>"
+        f"<tr><td style='padding:5px 8px'>5a</td><td style='padding:5px 8px'>"
+        f"Distributions — cash</td>"
+        f"<td style='padding:5px 8px;text-align:right'>({_m2r['line5a']:,.0f})</td></tr>"
+        f"<tr><td style='padding:5px 8px'>5b</td><td style='padding:5px 8px'>"
+        f"Distributions — stock</td>"
+        f"<td style='padding:5px 8px;text-align:right'>({_m2r['line5b']:,.0f})</td></tr>"
+        f"<tr><td style='padding:5px 8px'>5c</td><td style='padding:5px 8px'>"
+        f"Distributions — property</td>"
+        f"<td style='padding:5px 8px;text-align:right'>({_m2r['line5c']:,.0f})</td></tr>"
+        f"<tr><td style='padding:5px 8px'>6</td><td style='padding:5px 8px'>Other decreases</td>"
+        f"<td style='padding:5px 8px;text-align:right'>({_m2r['line6']:,.0f})</td></tr>"
+        f"<tr style='font-weight:700'><td style='padding:5px 8px'>7</td>"
+        f"<td style='padding:5px 8px'>Add lines 5 and 6</td>"
+        f"<td style='padding:5px 8px;text-align:right'>({_m2r['line7']:,.0f})</td></tr>"
+        f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+        f"<td style='padding:6px 8px'>8</td><td style='padding:6px 8px'>"
+        f"Balance at end of year — carried to Schedule L line 25</td>"
+        f"<td style='padding:6px 8px;text-align:right'>{_m2r['line8']:,.0f}</td></tr>"
+        "</table></div>", unsafe_allow_html=True)
+
+    irc([
+        "<b>Line 2 is book income, not taxable income.</b> M-2 tracks the book equity "
+        "account, so the differences M-1 spends its whole schedule reconciling have no "
+        "place here. A return that puts line 28 on M-2 line 2 will still add up, and will "
+        "still be wrong.",
+        "<b>Line 8 is not typed on Schedule L.</b> It is carried there. That is what makes "
+        "the balance sheet a test: if book income or the distributions are wrong, "
+        "Schedule L stops balancing instead of being forced to agree.",
+        "<b>Stock distributions at 5b</b> reduce retained earnings without moving any "
+        "asset — the offsetting credit is to capital stock and paid-in capital, so total "
+        "equity is unchanged and Schedule L still balances.",
+        "<b>Only unappropriated earnings belong here.</b> Amounts moved to the appropriated "
+        "account go out through line 6 and reappear at Schedule L line 24.",
+    ])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCHEDULE M-3
@@ -4892,6 +5369,7 @@ trail. Next session, *Load a saved return* picks up exactly where you left off.
             "gbc_used": _roll_gbc_used, "gbc_new": _roll_gbc_new,
             "i163j": _roll_163j, "char": _roll_char,
             "total_tax": _roll_total_tax, "overpay_credit": _roll_overpay_credit,
+            "m2_line8": M2["line8"],
         }
         st.rerun()
 
@@ -6039,9 +6517,13 @@ elif topic == "🏛️ CAMT & Estimated Tax":
 # TOPIC — PARTNERSHIPS (FORM 1065)
 # ─────────────────────────────────────────────────────────────────────────────
 elif active_form == "🤝 Form 1065":
-    st.title("Partnerships — Form 1065")
-
     f1065_section = f1065_nav  # routed from sidebar
+
+    if f1065_section == "📂 Trial Balance Import":
+        render_tb_import("1065")
+        f1065_section = None
+    else:
+        st.title("Partnerships — Form 1065")
 
     if f1065_nav == "📖 Overview":
         st.markdown("### Overview — Pass-Through Entities")
@@ -6113,7 +6595,9 @@ elif active_form == "🤝 Form 1065":
         return out
 
     def _f65_ord_income():
-        gp = st.session_state.get("f65_gp_services", 0.0) + st.session_state.get("f65_gp_capital", 0.0)
+        gp = (st.session_state.get("f65_gp_services", 0.0)
+              + st.session_state.get("f65_gp_capital", 0.0)
+              + LIQ65["guaranteed_payment"])
         dep_net = st.session_state.get("f65_dep", 0.0) - st.session_state.get("f65_dep_elsewhere", 0.0)
         inc = (st.session_state.get("f65_gross_receipts", 0.0)
                - st.session_state.get("f65_returns", 0.0)
@@ -6140,7 +6624,8 @@ elif active_form == "🤝 Form 1065":
         line 22 and line 4 from the guaranteed payments deducted there, so neither can
         be typed twice and disagree."""
         g = lambda k: st.session_state.get(k, 0.0)
-        gp_s, gp_c = g("f65_gp_services"), g("f65_gp_capital")
+        gp_s = g("f65_gp_services") + LIQ65["guaranteed_payment"]
+        gp_c = g("f65_gp_capital")
         rows = [
             ("1",   "Ordinary business income (loss) — page 1, line 22", _f65_ord_income(), True),
             ("2",   "Net rental real estate income (loss) — Form 8825", g("f65_k_rental_re"), False),
@@ -6181,7 +6666,1687 @@ elif active_form == "🤝 Form 1065":
                 "carried": {ln for ln, _, _, c in rows if c}}
 
     # PAGE: INCOME
-    if f1065_section == "📥 Income (Lines 1–8)":
+    def f65_formation():
+        """Every partner's contribution for the year, run through §721.
+
+        Computed in the shared pass because three other pages read it: Schedule K-1 takes
+        the book capital into Item L and the built-in gain into Items M and N, Schedule M-2
+        sums the contributions at line 2, and the basis page takes the §722 figure. A
+        contribution entered once has to reach all of them or they disagree."""
+        g = lambda k, d=0.0: st.session_state.get(k, d)
+        on = g("f65_q_contrib", "No") == "Yes"
+        # Questions 2, 3, 5 and 6 all describe a contribution, so a No at question 1
+        # answers them too. Question 4 is independent: services are not a §721
+        # contribution, so an interest for services is reportable either way.
+        yes = lambda k: (g(k, "No") == "Yes"
+                         and (on or k == "f65_q_services"))
+        rows, total = [], {"book": 0.0, "tax": 0.0, "big": 0.0, "gain": 0.0,
+                           "ps_basis": 0.0, "item_n": 0.0}
+        for x in f65_partners():
+            i = x["i"]
+            r = calc_721_contribution(
+                cash=g(f"f65_c_cash_{i}"),
+                property_basis=g(f"f65_c_basis_{i}") if yes("f65_q_property") else 0.0,
+                property_fmv=g(f"f65_c_fmv_{i}") if yes("f65_q_property") else 0.0,
+                liability_assumed=g(f"f65_c_liab_{i}") if yes("f65_q_liab") else 0.0,
+                retained_liability_share=(g(f"f65_c_retain_{i}") / 100.0
+                                          if yes("f65_q_liab") else 0.0),
+                other_liability_share=g(f"f65_c_other_liab_{i}") if yes("f65_q_liab") else 0.0,
+                is_investment_company=yes("f65_q_invco"))
+            svc = (calc_services_interest(g(f"f65_c_svc_kind_{i}", "profits"),
+                                          g(f"f65_c_svc_fmv_{i}"),
+                                          g(f"f65_c_svc_vested_{i}", "Yes") == "Yes")
+                   if yes("f65_q_services") else None)
+            # The §704(c) balance *before* this year's distributions. §737 and
+            # §704(c)(1)(B) both draw it down, and both need it as an input, so the balance
+            # has to be struck here and finished after the distribution page has run.
+            n_before = g(f"f65_n_prior_{i}") + (r["built_in_gain"] if on else 0.0)
+            n = calc_item_n(prior_unrecognized=g(f"f65_n_prior_{i}"),
+                            current_built_in_gain=r["built_in_gain"] if on else 0.0,
+                            allocated_this_year=g(f"f65_n_alloc_{i}"))
+            rows.append({"p": x, "r": r, "svc": svc, "n": n, "n_before": n_before,
+                         "character": g(f"f65_c_char_{i}", "capital")})
+            if on:
+                total["book"] += r["book_capital"]
+                total["tax"] += r["tax_capital"]
+                total["big"] += r["built_in_gain"]
+                total["gain"] += r["gain_total"]
+                total["ps_basis"] += r["partnership_basis"]
+            total["item_n"] += n["ending"]
+        return {"on": on, "rows": rows, "total": total}
+
+    F721 = f65_formation()
+
+    def f65_distributions():
+        """Current distributions, per partner.
+
+        Runs after formation because §737 is measured against the §704(c) balance that
+        formation produces, and feeds back into it because the gain draws that balance
+        down. Striking the balance once, before either rule, is what stops the two from
+        chasing each other."""
+        g = lambda k, d=0.0: st.session_state.get(k, d)
+        yes = lambda k: g(k, "No") == "Yes"
+        on = yes("f65_qd_any")
+        rows = []
+        for x in f65_partners():
+            i = x["i"]
+            props = []
+            if yes("f65_qd_property"):
+                for j, (nm, kl) in enumerate([("Property 1", "other"),
+                                              ("Property 2", "other")]):
+                    _b = g(f"f65_d_pbasis_{i}_{j}")
+                    _v = g(f"f65_d_pfmv_{i}_{j}")
+                    if _b or _v:
+                        props.append({
+                            "name": g(f"f65_d_pname_{i}_{j}", nm) or nm,
+                            "basis": _b, "fmv": _v,
+                            "klass": ("hot" if g(f"f65_d_pclass_{i}_{j}", "other")
+                                      in ("receivable", "inventory") else "other"),
+                            "character": g(f"f65_d_pclass_{i}_{j}", "capital")})
+            n_before = F721["rows"][i]["n_before"]
+            d = calc_current_distribution(
+                outside_basis=g(f"f65_d_basis_{i}"),
+                cash=g(f"f65_d_cash_{i}") if on else 0.0,
+                marketable_securities=g(f"f65_d_secs_{i}") if on else 0.0,
+                liability_relief=g(f"f65_d_relief_{i}") if yes("f65_qd_liab") else 0.0,
+                properties=props if on else (),
+                net_precontribution_gain=max(0.0, n_before),
+                seven_year_property=yes("f65_qd_7yr"))
+            c1b = calc_704c_1b(
+                built_in_gain_remaining=n_before,
+                distributed_to_another_partner=yes("f65_qd_contributed_out"),
+                years_since_contribution=int(g("f65_d_contrib_out_years", 0)))
+            rows.append({"p": x, "d": d, "c1b": c1b, "props": props,
+                         "n_before": n_before,
+                         "drawdown": d["gain_737"] + abs(c1b["gain"])
+                                     * (1 if c1b["gain"] >= 0 else -1)})
+        return {"on": on, "rows": rows}
+
+    DIST65 = f65_distributions()
+
+    def f65_liquidation():
+        """A retiring partner's liquidation. Computed in the shared pass because the
+        §736(a) half is a guaranteed payment that Schedule K line 4 has to pick up, and the
+        §732(b) basis difference feeds the §734(b) adjustment on the §754 page."""
+        g = lambda k, d=0.0: st.session_state.get(k, d)
+        yes = lambda k: g(k, "No") == "Yes"
+        on = yes("f65_ql_any")
+        roster = f65_partners()
+        i = min(int(g("f65_l_partner", 0)), len(roster) - 1)
+
+        props = []
+        if yes("f65_ql_property"):
+            for j in range(2):
+                b, v = g(f"f65_l_pbasis_{j}"), g(f"f65_l_pfmv_{j}")
+                if b or v:
+                    props.append({"name": g(f"f65_l_pname_{j}", f"Property {j + 1}")
+                                          or f"Property {j + 1}",
+                                  "basis": b, "fmv": v,
+                                  "klass": ("hot" if g(f"f65_l_pclass_{j}", "other")
+                                            in ("receivable", "inventory") else "other"),
+                                  "character": g(f"f65_l_pclass_{j}", "capital")})
+
+        split = calc_736_split(
+            total_payment=g("f65_l_total") if on else 0.0,
+            receivables_share=g("f65_l_recv") if on else 0.0,
+            goodwill_share=g("f65_l_goodwill") if on else 0.0,
+            other_property_share=g("f65_l_other_prop") if on else 0.0,
+            service_partnership=yes("f65_ql_service"),
+            general_partner=yes("f65_ql_gp"),
+            goodwill_in_agreement=yes("f65_ql_goodwill_agmt"))
+        char = calc_736a_character(yes("f65_ql_income_geared"))
+        d = calc_liquidating_distribution(
+            outside_basis=g("f65_l_basis"),
+            cash=g("f65_l_cash") if on else 0.0,
+            liability_relief=g("f65_l_relief") if on else 0.0,
+            properties=props if on else ())
+        return {"on": on, "partner": i, "roster": roster, "split": split,
+                "char": char, "d": d, "props": props,
+                # §736(a) is deductible only where it is a guaranteed payment; a
+                # distributive share reduces the other partners' shares instead.
+                "guaranteed_payment": (split["section_736a"]
+                                       if on and char["kind"] == "guaranteed payment"
+                                       else 0.0)}
+
+    LIQ65 = f65_liquidation()
+
+    def f65_sale():
+        """Sale of an interest. Needs the §704(c) balance because it moves with the
+        interest under Reg. §1.704-3(a)(7), so it runs after formation and distributions
+        have struck that balance."""
+        g = lambda k, d=0.0: st.session_state.get(k, d)
+        on = g("f65_qs_any", "No") == "Yes"
+        roster = f65_partners()
+        seller = min(int(g("f65_s_seller", 0)), len(roster) - 1)
+        buyer = min(int(g("f65_s_buyer", 1)), len(roster) - 1)
+
+        hot = []
+        if g("f65_qs_hot", "No") == "Yes":
+            for j in range(3):
+                b, v = g(f"f65_s_hbasis_{j}"), g(f"f65_s_hfmv_{j}")
+                if b or v:
+                    hot.append({"name": g(f"f65_s_hname_{j}", f"Hot asset {j + 1}")
+                                        or f"Hot asset {j + 1}",
+                                "basis": b, "fmv": v,
+                                "klass": g(f"f65_s_hclass_{j}", "receivable"),
+                                "cap": (g(f"f65_s_hcap_{j}") or None
+                                        if g(f"f65_s_hclass_{j}", "receivable") == "recapture"
+                                        else None)})
+        r = calc_sale_of_interest(
+            cash=g("f65_s_cash") if on else 0.0,
+            property_fmv=g("f65_s_prop") if on else 0.0,
+            liabilities_relieved=g("f65_s_relief") if on else 0.0,
+            outside_basis=g("f65_s_basis"),
+            hot_assets=hot if on else (),
+            ownership_pct=roster[seller]["ratio"],
+            holding_period_months=int(g("f65_s_months", 0)))
+        buyer_b = calc_buyer_basis(
+            purchase_price=(g("f65_s_cash") + g("f65_s_prop")) if on else 0.0,
+            liabilities_assumed=g("f65_s_relief") if on else 0.0)
+        adj = calc_743b(buyer_outside_basis=buyer_b["outside_basis"],
+                        share_of_inside_basis=g("f65_s_inside"),
+                        election_in_effect=g("f65_754", "No") == "Yes",
+                        substantial_built_in_loss=g("f65_qs_sbil", "No") == "Yes")
+        # Item N before the sale, from the balance formation and the distributions left.
+        n_seller = (F721["rows"][seller]["n_before"]
+                    - st.session_state.get(f"f65_n_alloc_{seller}", 0.0)
+                    - DIST65["rows"][seller]["drawdown"])
+        return {"on": on, "seller": seller, "buyer": buyer, "r": r,
+                "buyer_basis": buyer_b, "adj": adj, "hot": hot,
+                "c704": calc_704c_transfer(n_seller if on else 0.0)}
+
+    SALE65 = f65_sale()
+
+    def f65_item_n(i):
+        """Schedule K-1 Item N, finished.
+
+        The §704(c) balance comes down by whatever the year's distributions forced into
+        income under §737 or §704(c)(1)(B), and then moves partner to partner if the
+        interest was sold — built-in gain attaches to the property, not to the person, so a
+        sale relocates the balance rather than clearing it."""
+        row = F721["rows"][i]
+        n = calc_item_n(
+            prior_unrecognized=st.session_state.get(f"f65_n_prior_{i}", 0.0),
+            current_built_in_gain=row["r"]["built_in_gain"] if F721["on"] else 0.0,
+            allocated_this_year=st.session_state.get(f"f65_n_alloc_{i}", 0.0)
+                                + DIST65["rows"][i]["drawdown"])
+        moved = SALE65["c704"]["transferred"]
+        if SALE65["on"] and abs(moved) > 0.005 and SALE65["seller"] != SALE65["buyer"]:
+            if i == SALE65["seller"]:
+                n = {**n, "ending": n["ending"] - moved, "transferred_out": moved}
+            elif i == SALE65["buyer"]:
+                n = {**n, "ending": n["ending"] + moved, "transferred_in": moved}
+        return n
+
+    def f65_contributed_capital(i):
+        """Item L capital contributed, on the **tax basis**.
+
+        Item L has been reported on the tax basis since 2020, so the figure is the property's
+        adjusted basis net of debt the partnership assumes — not its value. Property worth
+        100,000 with a basis of 40,000 and a 70,000 mortgage produces a *negative* capital
+        contribution, which is correct and is exactly why Item N exists to carry the
+        difference.
+
+        Carried from the formation page when contributions were reported there, typed
+        otherwise — never both."""
+        if F721["on"]:
+            return F721["rows"][i]["r"]["tax_capital"]
+        return st.session_state.get(f"f65_ca_contrib_{i}", 0.0)
+
+    def f65_m2():
+        """Schedule M-2 — Analysis of Partners' Capital Accounts.
+
+        Hoisted out of the M-1/M-2 page because Schedule L carries line 9 into the closing
+        partners' capital. Two pages, one figure."""
+        g2 = lambda k: st.session_state.get(k, 0.0)
+        roster = f65_partners()
+        return calc_m2_1065(
+            beginning=sum(g2(f"f65_ca_begin_{x['i']}") for x in roster),
+            contributed=sum(f65_contributed_capital(x["i"]) for x in roster),
+            net_income=f65_schedule_k()["analysis"],
+            other_increases=g2("f65_m2_other_inc"),
+            dist_cash=g2("f65_k_dist_cash"), dist_property=g2("f65_k_dist_prop"),
+            other_decreases=g2("f65_m2_other_dec"))
+
+    M265 = f65_m2()
+
+    if f1065_section == "🏦 Schedule L — Balance Sheets":
+        render_schedule_l(
+            "1065",
+            closing_label="Line 21 is the book figure in both columns; the tax-basis "
+                          "capital from Item L is reconciled to it below.")
+
+        # The two figures answer different questions and are not required to agree. Item L
+        # and Schedule M-2 report capital on the tax basis, which a partnership has had to
+        # do since 2020; Schedule L reports the books. Anything the two measure
+        # differently — §704(c) built-in gain, a book-up on admission, non-deductible
+        # expenses — opens a gap here, and the preparer has to be able to name it.
+        # Forcing them to be equal would hide exactly that.
+        st.markdown("### Line 21 reconciled to Schedule M-2")
+        _book_cap = st.session_state.get("f65_sl_capital", 0.0)
+        _cap_gap = _book_cap - M265["line9"]
+        _cc1, _cc2, _cc3 = st.columns(3)
+        _cc1.metric("Schedule L line 21 — book basis", f"\\${_book_cap:,.0f}")
+        _cc2.metric("Schedule M-2 line 9 — tax basis", f"\\${M265['line9']:,.0f}")
+        _cc3.metric("Book/tax-basis capital difference", f"\\${_cap_gap:,.0f}",
+                    delta_color="off")
+        if abs(_cap_gap) < 1:
+            st.success("The books and the tax-basis capital accounts agree, so the "
+                       "partnership has no book-tax capital differences to explain.")
+        else:
+            st.info(f"A difference of \\${_cap_gap:,.0f} is not an error by itself — "
+                    f"Schedule L is book and Item L is tax basis. It does have to be "
+                    f"explainable: §704(c) built-in gain or loss on contributed property, "
+                    f"a book-up under Reg. §1.704-1(b)(2)(iv)(f), non-deductible expenses "
+                    f"that reduce tax capital but not book capital, or depreciation taken "
+                    f"at different rates on the two sets of books.")
+        irc([
+            "<b>Item L has been tax basis since 2020.</b> Before then a partnership could "
+            "report it on GAAP, §704(b) or any other method it disclosed. Now the capital "
+            "accounts on the K-1 are tax basis while Schedule L still follows the books, "
+            "so the two disagree by design in most real partnerships.",
+            "<b>§704(b) capital is a third measure.</b> It governs how much loss a partner "
+            "may be allocated and whether an allocation has substantial economic effect. "
+            "It is neither of the two figures above, and mixing the three up is the usual "
+            "reason an M-2 will not tie.",
+            "<b>The balance sheet check still bites.</b> Whatever basis line 21 is on, "
+            "assets must equal liabilities plus capital. That test does not care which "
+            "measure of capital is used — only that one is used consistently.",
+        ])
+
+    elif f1065_section == "📐 Formation & Contributions — §721":
+        st.markdown("## Formation and Contributions — §721, §722, §723")
+        st.markdown(
+            "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            "margin:8px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            "A contribution is tax-free. Everything examinable is what <b>survives</b> the "
+            "non-recognition — the basis carries over, the holding period tacks, the "
+            "character stays tainted for a period, and the built-in gain follows the "
+            "contributing partner for as long as the partnership holds the asset."
+            "</div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>§721(a):</b> no gain or loss to the partner <i>or</i> the partnership on a "
+            "contribution of property in exchange for a partnership interest. Unlike §351 "
+            "for a corporation, there is <b>no 80% control test</b> — §721 applies to a "
+            "contribution made on day one and to one made twenty years later.",
+            "<b>§722:</b> the partner's outside basis is the money contributed plus the "
+            "<b>adjusted basis</b> of the property — not its value.",
+            "<b>§723:</b> the partnership takes the same adjusted basis, increased by any "
+            "gain the partner had to recognise. Reg. §1.723-1 names §721(b) gain; the same "
+            "logic applies to §731(a)(1) gain forced by liability relief, since otherwise "
+            "the one gain would be taxed twice.",
+            "<span style='color:#C53030'><b>Services are not property.</b> §721 does not "
+            "apply to an interest received for services — that is §83 territory.</span>",
+        ])
+
+        st.markdown("### Questionnaire")
+        st.caption("Schedule B works exactly this way: a Yes opens the schedule it gates, "
+                   "a No closes it. Nothing below appears until a question calls for it.")
+
+        st.radio("**1** · Did any partner contribute cash or property during the year?",
+                 ["No", "Yes"], horizontal=True, key="f65_q_contrib")
+        st.radio("**4** · Did any partner receive a partnership interest in exchange for "
+                 "services?", ["No", "Yes"], horizontal=True, key="f65_q_services")
+
+        _q1 = st.session_state.get("f65_q_contrib", "No") == "Yes"
+        if _q1:
+            # Questions 2, 3, 5 and 6 describe the contribution reported at question 1, so
+            # they only exist once question 1 is Yes — the way a real Schedule B indents
+            # its follow-ups.
+            _qa, _qb = st.columns(2)
+            with _qa:
+                st.radio("**2** · Did any contribution consist of property other than cash?",
+                         ["No", "Yes"], horizontal=True, key="f65_q_property")
+                st.radio("**3** · Was contributed property subject to a liability, or did "
+                         "the partnership assume a partner's liability?",
+                         ["No", "Yes"], horizontal=True, key="f65_q_liab")
+            with _qb:
+                st.radio("**5** · Did the partnership transfer money or property to a "
+                         "contributing partner within two years of the contribution?",
+                         ["No", "Yes"], horizontal=True, key="f65_q_dist2y")
+                st.radio("**6** · Would the partnership be an investment company under "
+                         "§351 if it were incorporated?", ["No", "Yes"], horizontal=True,
+                         key="f65_q_invco")
+        else:
+            st.caption("Questions 2, 3, 5 and 6 describe a contribution and appear once "
+                       "question 1 is answered Yes.")
+
+        _fq = lambda k: (st.session_state.get(k, "No") == "Yes"
+                         and (_q1 or k == "f65_q_services"))
+
+        if not _fq("f65_q_contrib") and not _fq("f65_q_services"):
+            st.info("Question 1 and question 4 are both No, so there is nothing to report "
+                    "on formation this year. Schedule K-1 Item M will be answered No and "
+                    "Item N will carry only prior-year balances.")
+        else:
+            F = f65_formation()
+            st.markdown("### Contributions by partner")
+            if _fq("f65_q_invco"):
+                st.warning("**§721(b) applies.** Non-recognition is switched off where a "
+                           "contribution diversifies holdings into what would be an "
+                           "investment company. Gain is recognised; losses are not.")
+
+            for _row in F["rows"]:
+                _i = _row["p"]["i"]
+                with st.expander(f"**{_row['p']['name']}**", expanded=True):
+                    _c1, _c2, _c3 = st.columns(3)
+                    _c1.number_input("Cash contributed ($)", min_value=0.0, step=10_000.0,
+                                     format="%.2f", key=f"f65_c_cash_{_i}")
+                    if _fq("f65_q_property"):
+                        _c2.number_input("Property — adjusted basis ($)", min_value=0.0,
+                                         step=10_000.0, format="%.2f",
+                                         key=f"f65_c_basis_{_i}")
+                        _c3.number_input("Property — fair market value ($)", min_value=0.0,
+                                         step=10_000.0, format="%.2f",
+                                         key=f"f65_c_fmv_{_i}")
+                        st.selectbox(
+                            "Character in the contributor's hands",
+                            ["capital", "1231", "inventory", "receivable", "capital_loss",
+                             "ordinary"],
+                            format_func=lambda v: {
+                                "capital": "Capital asset",
+                                "1231": "§1231 property",
+                                "inventory": "Inventory",
+                                "receivable": "Unrealised receivable",
+                                "capital_loss": "Capital asset with a built-in loss",
+                                "ordinary": "Other ordinary-income property"}[v],
+                            key=f"f65_c_char_{_i}")
+                    if _fq("f65_q_liab"):
+                        _d1, _d2, _d3 = st.columns(3)
+                        _d1.number_input("Liability the partnership assumes ($)",
+                                         min_value=0.0, step=10_000.0, format="%.2f",
+                                         key=f"f65_c_liab_{_i}")
+                        _d2.number_input("Share of that liability retained (%)",
+                                         min_value=0.0, max_value=100.0, step=1.0,
+                                         key=f"f65_c_retain_{_i}")
+                        _d3.number_input("Share of the partnership's other debt ($)",
+                                         min_value=0.0, step=10_000.0, format="%.2f",
+                                         key=f"f65_c_other_liab_{_i}")
+                    if _fq("f65_q_services"):
+                        _e1, _e2, _e3 = st.columns(3)
+                        _e1.selectbox("Interest received for services",
+                                      ["profits", "capital"],
+                                      format_func=lambda v: {
+                                          "profits": "Profits interest",
+                                          "capital": "Capital interest"}[v],
+                                      key=f"f65_c_svc_kind_{_i}")
+                        _e2.number_input("Value of that interest ($)", min_value=0.0,
+                                         step=10_000.0, format="%.2f",
+                                         key=f"f65_c_svc_fmv_{_i}")
+                        _e3.radio("Vested?", ["Yes", "No"], horizontal=True,
+                                  key=f"f65_c_svc_vested_{_i}")
+                    if _fq("f65_q_dist2y"):
+                        _g1, _g2 = st.columns(2)
+                        _g1.number_input("Transferred back to this partner ($)",
+                                         min_value=0.0, step=10_000.0, format="%.2f",
+                                         key=f"f65_c_dist_{_i}")
+                        _g2.number_input("Months between the two transfers",
+                                         min_value=0, max_value=120, step=1,
+                                         key=f"f65_c_months_{_i}")
+                    _h1, _h2 = st.columns(2)
+                    _h1.number_input("Item N — prior year unrecognised §704(c) ($)",
+                                     step=10_000.0, format="%.2f", key=f"f65_n_prior_{_i}")
+                    _h2.number_input("§704(c) gain allocated to this partner this year ($)",
+                                     step=10_000.0, format="%.2f", key=f"f65_n_alloc_{_i}")
+
+            F = f65_formation()
+
+            st.markdown("### Results")
+            _hdr = ("<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                    "<th style='padding:6px 8px;text-align:left'>Item</th>"
+                    + "".join(f"<th style='padding:6px 8px;text-align:right'>"
+                              f"{r['p']['name']}</th>" for r in F["rows"])
+                    + "<th style='padding:6px 8px;text-align:right'>Total</th></tr>")
+            _lines = [
+                ("Gain recognised — §721(b)", "gain_721b", False),
+                ("Gain recognised — §731(a)(1) on liability relief", "gain_731", False),
+                ("Outside basis — §722", "outside_basis", True),
+                ("Partnership's basis in the property — §723", "partnership_basis", True),
+                ("Book capital account — §704(b), at value", "book_capital", True),
+                ("Tax capital account — Item L, at basis", "tax_capital", True),
+                ("Built-in gain (loss) carried under §704(c)", "built_in_gain", True),
+            ]
+            _body = ""
+            for _lbl, _key, _shade in _lines:
+                _tot = sum(r["r"][_key] for r in F["rows"])
+                _bg = " style='background:#eef2f7'" if _shade else ""
+                _body += (f"<tr{_bg}><td style='padding:5px 8px'>{_lbl}</td>"
+                          + "".join(f"<td style='padding:5px 8px;text-align:right'>"
+                                    f"{r['r'][_key]:,.0f}</td>" for r in F["rows"])
+                          + f"<td style='padding:5px 8px;text-align:right;font-weight:600'>"
+                            f"{_tot:,.0f}</td></tr>")
+            _body += ("<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+                      "<td style='padding:6px 8px'>Item N — net unrecognised §704(c), ending</td>"
+                      + "".join(f"<td style='padding:6px 8px;text-align:right'>"
+                                f"{r['n']['ending']:,.0f}</td>" for r in F["rows"])
+                      + f"<td style='padding:6px 8px;text-align:right'>"
+                        f"{F['total']['item_n']:,.0f}</td></tr>")
+            st.markdown(f"<div style='overflow-x:auto'><table style='width:100%;"
+                        f"border-collapse:collapse;font-size:0.84rem'>{_hdr}{_body}"
+                        f"</table></div>", unsafe_allow_html=True)
+
+            # The invariant the whole page rests on. Book capital takes value, tax capital
+            # takes cost, and the difference is exactly the §704(c) layer — so Item N can
+            # never report a built-in gain the capital accounts do not support.
+            _gap = F["total"]["book"] - F["total"]["tax"] - F["total"]["big"]
+            _t1, _t2, _t3 = st.columns(3)
+            _t1.metric("Book capital less tax capital",
+                       f"\\${F['total']['book'] - F['total']['tax']:,.0f}")
+            _t2.metric("Built-in gain carried to Item N",
+                       f"\\${F['total']['big']:,.0f}")
+            _t3.metric("Difference", f"\\${_gap:,.0f}",
+                       "Ties" if abs(_gap) < 0.5 else "Does not tie",
+                       delta_color="normal" if abs(_gap) < 0.5 else "inverse")
+
+            if F["total"]["gain"] > 0.5:
+                st.error(
+                    f"**\\${F['total']['gain']:,.0f} of gain is recognised on "
+                    f"contribution.** Note where it is reported: this is the **partner's** "
+                    f"gain, not the partnership's. It appears on the partner's own return "
+                    f"and never on Form 1065 or Schedule K — the partnership return shows "
+                    f"only the consequence, which is a higher §723 basis in the asset.")
+
+            if _fq("f65_q_property"):
+                st.markdown("### §724 character taint and §1223 holding periods")
+                _tr = ""
+                for _row in F["rows"]:
+                    _t = calc_724_taint(_row["character"])
+                    _hp = calc_holding_period(_row["character"],
+                                              has_cash=st.session_state.get(
+                                                  f"f65_c_cash_{_row['p']['i']}", 0.0) > 0)
+                    _tr += (f"<tr><td style='padding:5px 8px'>{_row['p']['name']}</td>"
+                            f"<td style='padding:5px 8px'>{_t['label']}</td>"
+                            f"<td style='padding:5px 8px'>"
+                            f"{'Tacks' if _hp['interest_tacks'] else 'Begins fresh'}"
+                            f"{' (split)' if _hp['split'] else ''}</td>"
+                            f"<td style='padding:5px 8px'>Tacks</td></tr>")
+                st.markdown(
+                    "<div style='overflow-x:auto'><table style='width:100%;"
+                    "border-collapse:collapse;font-size:0.84rem'>"
+                    "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                    "<th style='padding:6px 8px;text-align:left'>Partner</th>"
+                    "<th style='padding:6px 8px;text-align:left'>§724 character</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Holding period of the "
+                    "interest — §1223(1)</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Partnership's holding "
+                    "period — §1223(2)</th></tr>" + _tr + "</table></div>",
+                    unsafe_allow_html=True)
+                irc([calc_724_taint(r["character"])["note"] for r in F["rows"]
+                     if calc_724_taint(r["character"])["tainted"]]
+                    or ["No §724 taint applies. Character in the partnership's hands is "
+                        "determined by how the partnership holds the asset."])
+
+            if _fq("f65_q_services"):
+                st.markdown("### Interests received for services")
+                for _row in F["rows"]:
+                    if _row["svc"] and (_row["svc"]["income"] or
+                                        st.session_state.get(
+                                            f"f65_c_svc_fmv_{_row['p']['i']}", 0.0)):
+                        _lbl = ("taxable compensation of "
+                                f"\\${_row['svc']['income']:,.0f}"
+                                if _row["svc"]["taxable"] else "not taxable on grant")
+                        st.markdown(f"**{_row['p']['name']}** — {_lbl}")
+                        st.caption(_row["svc"]["note"])
+
+            if _fq("f65_q_dist2y"):
+                st.markdown("### §707(a)(2)(B) — disguised sale")
+                for _row in F["rows"]:
+                    _i = _row["p"]["i"]
+                    _ds = calc_disguised_sale(
+                        contribution_fmv=st.session_state.get(f"f65_c_fmv_{_i}", 0.0),
+                        distribution=st.session_state.get(f"f65_c_dist_{_i}", 0.0),
+                        months_apart=st.session_state.get(f"f65_c_months_{_i}", 0))
+                    if _ds["sale_proceeds"]:
+                        (st.error if _ds["presumed_sale"] else st.info)(
+                            f"**{_row['p']['name']}** — {_ds['note']}")
+
+            st.markdown("### Where these figures go")
+            st.markdown(
+                "<div style='overflow-x:auto'><table style='width:100%;"
+                "border-collapse:collapse;font-size:0.84rem'>"
+                "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                "<th style='padding:6px 8px;text-align:left'>Figure</th>"
+                "<th style='padding:6px 8px;text-align:left'>Carried to</th></tr>"
+                "<tr><td style='padding:5px 8px'>Tax capital account</td>"
+                "<td style='padding:5px 8px'>Schedule K-1 <b>Item L</b> — capital "
+                "contributed, and from there Schedule M-2 line 2. Item L has been tax "
+                "basis since 2020, so a mortgage exceeding basis makes this "
+                "<i>negative</i></td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>Book capital "
+                "account — §704(b)</td><td style='padding:5px 8px'>Schedule L line 21, "
+                "which follows the books. The gap to Item L is the §704(c) layer</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>Built-in gain "
+                "or loss</td><td style='padding:5px 8px'>Schedule K-1 <b>Item M</b> "
+                "(Yes/No) and <b>Item N</b> (running balance)</td></tr>"
+                "<tr><td style='padding:5px 8px'>Outside basis — §722</td>"
+                "<td style='padding:5px 8px'>Opening basis on the <b>🧮 Outside Basis</b> "
+                "page, where §704(d), §465 and §469 are then applied</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>§723 basis in "
+                "the property</td><td style='padding:5px 8px'>The partnership's tax basis "
+                "for depreciation and for gain on a later sale. Schedule L carries the "
+                "asset at book, and the gap between the two is the §704(c) layer</td></tr>"
+                "<tr><td style='padding:5px 8px'>Gain recognised</td>"
+                "<td style='padding:5px 8px'>Nowhere on Form 1065 — it is the partner's "
+                "gain, reported on the partner's own return</td></tr>"
+                "</table></div>", unsafe_allow_html=True)
+
+            irc([
+                "<b>§721 has no control requirement, and that is the headline difference "
+                "from §351.</b> A person can contribute appreciated property to an existing "
+                "partnership for a 2% interest and still recognise nothing. Do the same "
+                "with a corporation and the contribution is fully taxable unless the "
+                "contributor is part of a group controlling 80%.",
+                "<span style='color:#C53030'><b>A contribution can still be taxable.</b> "
+                "Where the partnership assumes a liability greater than the partner's basis "
+                "in the property, §752(b) treats the relief as a distribution of money and "
+                "§731(a)(1) produces gain. §721 does not prevent it.</span>",
+                "<b>Three capital figures diverge at contribution</b> and stay apart: "
+                "outside basis (§722, at adjusted basis, plus the share of debt), the "
+                "§704(b) book capital account (at value), and the tax capital account "
+                "reported at Item L. Item N exists to measure the gap.",
+            ])
+
+    elif f1065_section == "💸 Current Distributions — §731/§732":
+        st.markdown("## Current Distributions — §731, §732, §733")
+        st.markdown(
+            "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            "margin:8px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            "A current distribution is normally tax-free, and the three ways that breaks "
+            "down are the whole examinable content: <b>money above basis</b>, <b>property "
+            "coming back to a partner who contributed appreciated property</b>, and "
+            "<b>contributed property going out to somebody else</b>."
+            "</div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>§731(a)(1):</b> gain only to the extent <b>money</b> exceeds outside basis "
+            "immediately before the distribution. Property never produces gain, however far "
+            "its value exceeds its basis — the partner simply takes a lower basis in it.",
+            "<span style='color:#C53030'><b>§731(a)(2): a current distribution can never "
+            "produce a loss.</b> Loss is available only in liquidation, and even then only "
+            "where nothing but money, receivables and inventory comes out.</span>",
+            "<b>§732(a)(2):</b> the basis of distributed property is capped at what is left "
+            "of outside basis after money. In a current distribution the carryover basis can "
+            "only come <i>down</i> — any excess simply disappears.",
+            "<b>Money is wider than cash.</b> §731(c) puts marketable securities on the "
+            "money side and §752(b) does the same for a reduction in the partner's share of "
+            "debt — which is how a partner is taxed on a distribution of nothing at all.",
+        ])
+
+        st.markdown("### Questionnaire")
+        st.radio("**1** · Did the partnership make any distribution to a partner during "
+                 "the year?", ["No", "Yes"], horizontal=True, key="f65_qd_any")
+
+        _dq1 = st.session_state.get("f65_qd_any", "No") == "Yes"
+        if _dq1:
+            _da, _db = st.columns(2)
+            with _da:
+                st.radio("**2** · Did any distribution include property other than money?",
+                         ["No", "Yes"], horizontal=True, key="f65_qd_property")
+                st.radio("**3** · Did any partner's share of partnership liabilities fall?",
+                         ["No", "Yes"], horizontal=True, key="f65_qd_liab")
+                st.radio("**4** · Did the distribution change any partner's interest in "
+                         "unrealised receivables or substantially appreciated inventory?",
+                         ["No", "Yes"], horizontal=True, key="f65_qd_hot")
+            with _db:
+                st.radio("**5** · Did a partner who contributed appreciated property within "
+                         "the last seven years receive <i>other</i> property? — §737",
+                         ["No", "Yes"], horizontal=True, key="f65_qd_7yr")
+                st.radio("**6** · Was property that a partner contributed distributed to a "
+                         "<i>different</i> partner? — §704(c)(1)(B)",
+                         ["No", "Yes"], horizontal=True, key="f65_qd_contributed_out")
+                if st.session_state.get("f65_qd_contributed_out", "No") == "Yes":
+                    st.number_input("Years since that property was contributed",
+                                    min_value=0, max_value=30, step=1,
+                                    key="f65_d_contrib_out_years")
+        else:
+            st.caption("Questions 2 to 6 describe a distribution and appear once question 1 "
+                       "is answered Yes.")
+
+        _dq = lambda k: (st.session_state.get(k, "No") == "Yes") and _dq1
+
+        if not _dq1:
+            st.info("No distributions this year. Schedule K lines 19a and 19b stay at nil, "
+                    "Schedule M-2 line 6 stays at nil, and no partner's outside basis is "
+                    "reduced.")
+        else:
+            st.markdown("### Distribution by partner")
+            for _drow in DIST65["rows"]:
+                _i = _drow["p"]["i"]
+                with st.expander(f"**{_drow['p']['name']}**", expanded=True):
+                    _x1, _x2, _x3 = st.columns(3)
+                    _x1.number_input("Outside basis before the distribution ($)",
+                                     min_value=0.0, step=10_000.0, format="%.2f",
+                                     key=f"f65_d_basis_{_i}")
+                    _x2.number_input("Cash distributed ($)", min_value=0.0, step=10_000.0,
+                                     format="%.2f", key=f"f65_d_cash_{_i}")
+                    _x3.number_input("Marketable securities — §731(c) ($)", min_value=0.0,
+                                     step=10_000.0, format="%.2f", key=f"f65_d_secs_{_i}")
+                    if _dq("f65_qd_liab"):
+                        st.number_input("Reduction in the share of liabilities — §752(b) ($)",
+                                        min_value=0.0, step=10_000.0, format="%.2f",
+                                        key=f"f65_d_relief_{_i}")
+                    if _dq("f65_qd_property"):
+                        for _j in range(2):
+                            _y1, _y2, _y3, _y4 = st.columns([3, 2, 2, 3])
+                            _y1.text_input(f"Property {_j + 1} — description",
+                                           key=f"f65_d_pname_{_i}_{_j}")
+                            _y2.number_input("Partnership's basis ($)", min_value=0.0,
+                                             step=10_000.0, format="%.2f",
+                                             key=f"f65_d_pbasis_{_i}_{_j}")
+                            _y3.number_input("Fair market value ($)", min_value=0.0,
+                                             step=10_000.0, format="%.2f",
+                                             key=f"f65_d_pfmv_{_i}_{_j}")
+                            _y4.selectbox(
+                                "Class", ["capital", "1231", "inventory", "receivable"],
+                                format_func=lambda v: {
+                                    "capital": "Capital asset",
+                                    "1231": "§1231 property",
+                                    "inventory": "Inventory — hot",
+                                    "receivable": "Unrealised receivable — hot"}[v],
+                                key=f"f65_d_pclass_{_i}_{_j}")
+
+            D = f65_distributions()
+
+            st.markdown("### Results")
+            _dh = ("<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                   "<th style='padding:6px 8px;text-align:left'>Item</th>"
+                   + "".join(f"<th style='padding:6px 8px;text-align:right'>"
+                             f"{r['p']['name']}</th>" for r in D["rows"])
+                   + "<th style='padding:6px 8px;text-align:right'>Total</th></tr>")
+            _dl = [
+                ("Money distributed — cash, securities and debt relief", "money", False),
+                ("Gain — §731(a)(1), money over basis", "gain_731", False),
+                ("Gain — §737, pre-contribution gain pulled back", "gain_737", False),
+                ("Basis available for property — §732", "basis_for_property", True),
+                ("Basis taken by the property", "basis_to_property", True),
+                ("Basis lost to the §732(a)(2) cap", "basis_lost", False),
+                ("Outside basis after the distribution — §733", "ending_basis", True),
+            ]
+            _dbody = ""
+            for _lbl, _key, _shade in _dl:
+                _tot = sum(r["d"][_key] for r in D["rows"])
+                _bg = " style='background:#eef2f7'" if _shade else ""
+                _dbody += (f"<tr{_bg}><td style='padding:5px 8px'>{_lbl}</td>"
+                           + "".join(f"<td style='padding:5px 8px;text-align:right'>"
+                                     f"{r['d'][_key]:,.0f}</td>" for r in D["rows"])
+                           + f"<td style='padding:5px 8px;text-align:right;font-weight:600'>"
+                             f"{_tot:,.0f}</td></tr>")
+            _c1b_tot = sum(r["c1b"]["gain"] for r in D["rows"])
+            _dbody += (f"<tr><td style='padding:5px 8px'>Gain — §704(c)(1)(B), contributed "
+                       f"property out to another partner</td>"
+                       + "".join(f"<td style='padding:5px 8px;text-align:right'>"
+                                 f"{r['c1b']['gain']:,.0f}</td>" for r in D["rows"])
+                       + f"<td style='padding:5px 8px;text-align:right;font-weight:600'>"
+                         f"{_c1b_tot:,.0f}</td></tr>")
+            st.markdown(f"<div style='overflow-x:auto'><table style='width:100%;"
+                        f"border-collapse:collapse;font-size:0.84rem'>{_dh}{_dbody}"
+                        f"</table></div>", unsafe_allow_html=True)
+
+            _basis_ok = all(
+                abs(r["d"]["basis_to_property"] + r["d"]["ending_basis"]
+                    - r["d"]["basis_for_property"]) < 0.5 for r in D["rows"])
+            _tot_gain = sum(r["d"]["gain_total"] for r in D["rows"]) + _c1b_tot
+            _z1, _z2, _z3 = st.columns(3)
+            _z1.metric("Total gain recognised", f"\\${_tot_gain:,.0f}")
+            _z2.metric("Basis lost to the cap",
+                       f"\\${sum(r['d']['basis_lost'] for r in D['rows']):,.0f}")
+            _z3.metric("Basis conserved", "Yes" if _basis_ok else "No",
+                       "every dollar allocated or retained" if _basis_ok
+                       else "check the allocation",
+                       delta_color="normal" if _basis_ok else "inverse")
+
+            if _tot_gain > 0.5:
+                st.error(
+                    f"**\\${_tot_gain:,.0f} of gain is recognised.** As with a "
+                    f"contribution, this is the **partner's** gain and appears on the "
+                    f"partner's own return — not on Form 1065 and not on Schedule K. The "
+                    f"partnership return shows only the distribution itself, at lines 19a "
+                    f"and 19b.")
+
+            if any(r["d"]["allocations"] for r in D["rows"]):
+                st.markdown("### §732 — basis taken by each property")
+                _pr = ""
+                for _drow in D["rows"]:
+                    for _pp in _drow["props"]:
+                        _got = _drow["d"]["allocations"].get(_pp["name"], 0.0)
+                        _ch = calc_735_character(_pp["character"], 0)
+                        _pr += (f"<tr><td style='padding:5px 8px'>{_drow['p']['name']}</td>"
+                                f"<td style='padding:5px 8px'>{_pp['name']}</td>"
+                                f"<td style='padding:5px 8px'>"
+                                f"{'Hot — §751' if _pp['klass'] == 'hot' else 'Other'}</td>"
+                                f"<td style='padding:5px 8px;text-align:right'>"
+                                f"{_pp['basis']:,.0f}</td>"
+                                f"<td style='padding:5px 8px;text-align:right'>"
+                                f"{_got:,.0f}</td>"
+                                f"<td style='padding:5px 8px'>{_ch['label']}</td></tr>")
+                st.markdown(
+                    "<div style='overflow-x:auto'><table style='width:100%;"
+                    "border-collapse:collapse;font-size:0.84rem'>"
+                    "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                    "<th style='padding:6px 8px;text-align:left'>Partner</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Property</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Class</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Partnership's basis</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Basis in the partner's "
+                    "hands — §732</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Character on later sale "
+                    "— §735</th></tr>" + _pr + "</table></div>", unsafe_allow_html=True)
+                irc([
+                    "<b>Hot assets take basis first.</b> §732(c)(1) serves unrealised "
+                    "receivables and inventory before anything else, so a shortfall lands "
+                    "on the capital asset rather than on the ordinary-income assets.",
+                    "<b>A shortfall goes to unrealised depreciation first.</b> §732(c)(3) "
+                    "spreads the required decrease across properties carrying basis above "
+                    "value, in proportion to that excess, before touching anything else.",
+                    "<b>§735 mirrors §724 on the way out.</b> Receivables stay ordinary for "
+                    "ever; inventory stays ordinary for five years and then follows the "
+                    "partner's own use — so a partner holding distributed inventory as an "
+                    "investment can reach capital treatment by waiting.",
+                ])
+
+            if _dq("f65_qd_7yr") or _dq("f65_qd_contributed_out"):
+                st.markdown("### The two seven-year rules")
+                st.caption("Both exist for the same reason: without them a partnership "
+                           "would be a machine for swapping appreciated assets tax-free. "
+                           "They are mirror images and they draw down the same balance the "
+                           "K-1 reports at Item N.")
+                for _drow in D["rows"]:
+                    if _drow["d"]["gain_737"] > 0.5:
+                        st.error(f"**{_drow['p']['name']} — §737.** Contributed appreciated "
+                                 f"property within seven years and has now received other "
+                                 f"property, so \\${_drow['d']['gain_737']:,.0f} of the "
+                                 f"pre-contribution gain is recognised. §737(c)(1) adds it "
+                                 f"to outside basis before §732 runs, which is why the "
+                                 f"distributed property could take more basis.")
+                    if _drow["c1b"]["triggered"]:
+                        st.error(f"**{_drow['p']['name']} — §704(c)(1)(B).** "
+                                 f"{_drow['c1b']['note']}")
+                    elif _dq("f65_qd_contributed_out"):
+                        st.info(f"**{_drow['p']['name']} — §704(c)(1)(B).** "
+                                f"{_drow['c1b']['note']}")
+
+            if _dq("f65_qd_hot"):
+                _hot = calc_751b_flag(0.0, 1.0)
+                st.warning("**§751(b) — disproportionate distribution.** " + _hot["note"])
+
+            st.markdown("### Where these figures go")
+            st.markdown(
+                "<div style='overflow-x:auto'><table style='width:100%;"
+                "border-collapse:collapse;font-size:0.84rem'>"
+                "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                "<th style='padding:6px 8px;text-align:left'>Figure</th>"
+                "<th style='padding:6px 8px;text-align:left'>Carried to</th></tr>"
+                "<tr><td style='padding:5px 8px'>Cash and property distributed</td>"
+                "<td style='padding:5px 8px'>Schedule K lines <b>19a</b> and <b>19b</b>, "
+                "and from there Schedule M-2 line 6 and Item L</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>§737 and "
+                "§704(c)(1)(B) gain</td><td style='padding:5px 8px'>Draws down Schedule K-1 "
+                "<b>Item N</b>, the net unrecognised §704(c) balance built on the "
+                "<b>📐 Formation</b> page</td></tr>"
+                "<tr><td style='padding:5px 8px'>Outside basis after the distribution</td>"
+                "<td style='padding:5px 8px'>Opening basis for the <b>🧮 Outside Basis</b> "
+                "page, where §704(d), §465 and §469 are applied</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>Gain "
+                "recognised</td><td style='padding:5px 8px'>Nowhere on Form 1065 — it is "
+                "the partner's gain, reported on the partner's own return</td></tr>"
+                "</table></div>", unsafe_allow_html=True)
+
+            irc([
+                "<b>Compare the contribution rules.</b> On the way in, §721 gives "
+                "non-recognition and §752(b) can still force gain through liability relief. "
+                "On the way out, §731 does the same job — the symmetry is deliberate, and "
+                "both turn on money measured against basis.",
+                "<span style='color:#C53030'><b>Basis lost to the §732(a)(2) cap is gone "
+                "for good.</b> There is no carryforward and no later recovery. It is the "
+                "price of taking property out of a partnership when the interest no longer "
+                "has basis to support it — and the reason a §754 election matters.</span>",
+                "<b>§737 and §704(c)(1)(B) are mirror images.</b> §704(c)(1)(B) catches the "
+                "contributed property going out to somebody else; §737 catches other "
+                "property coming back to the contributor. Both run seven years from the "
+                "contribution, and both stop the partnership being used as a swap.",
+            ])
+
+    elif f1065_section == "🤝 Sale of an Interest — §741/§751":
+        st.markdown("## Sale of a Partnership Interest — §741, §751(a), §752(d)")
+        st.markdown(
+            "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            "margin:8px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            "§741 is one sentence — the gain is capital. §751(a) is the exception that "
+            "swallows most of the content, and the pattern to recognise on sight is "
+            "<b>ordinary income alongside a capital loss</b>, out of a sale that made money."
+            "</div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>§741:</b> a partnership interest is a capital asset, so gain or loss on its "
+            "sale is capital — <i>except as provided in §751</i>.",
+            "<span style='color:#C53030'><b>§752(d): the debt is part of the price.</b> The "
+            "buyer takes over the seller's share of partnership liabilities, and that "
+            "relief is in the amount realised. A partner can sell for no cash at all and "
+            "still have a substantial gain.</span>",
+            "<b>§751(a):</b> the seller's share of the gain in <b>unrealised receivables</b> "
+            "and <b>inventory items</b> is ordinary. It is computed first, and the capital "
+            "figure is whatever is left — which is how a profitable sale produces a capital "
+            "loss.",
+            "<b>§751(c) reaches further than the accounting term.</b> The flush language "
+            "pulls in depreciation recapture, so a cash-basis partnership with no "
+            "receivables on its books can still hold §751 assets.",
+        ])
+
+        st.markdown("### Questionnaire")
+        st.radio("**1** · Was any partnership interest sold or exchanged during the year?",
+                 ["No", "Yes"], horizontal=True, key="f65_qs_any")
+        _sq1 = st.session_state.get("f65_qs_any", "No") == "Yes"
+        if _sq1:
+            _sa, _sb = st.columns(2)
+            with _sa:
+                st.radio("**2** · Does the partnership hold unrealised receivables, "
+                         "inventory, or property with depreciation recapture? — §751(a)",
+                         ["No", "Yes"], horizontal=True, key="f65_qs_hot")
+                _el = st.session_state.get("f65_754", "No")
+                st.markdown(
+                    f"<div class='adj-auto'><b>3</b> · §754 election in effect: "
+                    f"<b>{_el}</b> — set on the <b>⚖️ §754 Election</b> page, because it "
+                    f"binds every year and every transfer, not just this one</div>",
+                    unsafe_allow_html=True)
+            with _sb:
+                st.radio("**4** · Does the partnership have a substantial built-in loss "
+                         "immediately after the transfer? — §743(d)",
+                         ["No", "Yes"], horizontal=True, key="f65_qs_sbil")
+                st.radio("**5** · Was the transferor a foreign person? — §1446(f)",
+                         ["No", "Yes"], horizontal=True, key="f65_qs_foreign")
+        else:
+            st.caption("Questions 2 to 5 describe a transfer and appear once question 1 is "
+                       "answered Yes.")
+
+        _sq = lambda k: (st.session_state.get(k, "No") == "Yes") and _sq1
+
+        if not _sq1:
+            st.info("No transfer this year. Form 8308 is not required, no partner's tax "
+                    "year closes early under §706(c)(2), and Schedule B question 13 is "
+                    "answered No.")
+        else:
+            _ROSTER = f65_partners()
+            _names = [x["name"] for x in _ROSTER]
+            st.markdown("### The transfer")
+            _t1, _t2, _t3 = st.columns(3)
+            _t1.selectbox("Selling partner", list(range(len(_ROSTER))),
+                          format_func=lambda i: _names[i], key="f65_s_seller")
+            _t2.selectbox("Buying partner", list(range(len(_ROSTER))),
+                          format_func=lambda i: _names[i], key="f65_s_buyer")
+            _t3.number_input("Months the interest was held", min_value=0, max_value=600,
+                             step=1, key="f65_s_months")
+
+            _u1, _u2, _u3, _u4 = st.columns(4)
+            _u1.number_input("Cash received ($)", min_value=0.0, step=10_000.0,
+                             format="%.2f", key="f65_s_cash")
+            _u2.number_input("Property received, at value ($)", min_value=0.0,
+                             step=10_000.0, format="%.2f", key="f65_s_prop")
+            _u3.number_input("Share of liabilities relieved — §752(d) ($)", min_value=0.0,
+                             step=10_000.0, format="%.2f", key="f65_s_relief")
+            _u4.number_input("Seller's outside basis ($)", min_value=0.0, step=10_000.0,
+                             format="%.2f", key="f65_s_basis")
+
+            if _sq("f65_qs_hot"):
+                st.markdown("### §751 assets — at the partnership level")
+                st.caption("Enter the partnership's figures. The seller's share is applied "
+                           "automatically from the sharing ratio on the K-1 page.")
+                for _j in range(3):
+                    _h1, _h2, _h3, _h4, _h5 = st.columns([3, 2, 2, 3, 2])
+                    _h1.text_input(f"Asset {_j + 1}", key=f"f65_s_hname_{_j}")
+                    _h2.number_input("Basis ($)", min_value=0.0, step=10_000.0,
+                                     format="%.2f", key=f"f65_s_hbasis_{_j}")
+                    _h3.number_input("Value ($)", min_value=0.0, step=10_000.0,
+                                     format="%.2f", key=f"f65_s_hfmv_{_j}")
+                    _h4.selectbox("Class", ["receivable", "inventory", "recapture"],
+                                  format_func=lambda v: {
+                                      "receivable": "Unrealised receivable",
+                                      "inventory": "Inventory item",
+                                      "recapture": "Depreciation recapture"}[v],
+                                  key=f"f65_s_hclass_{_j}")
+                    if st.session_state.get(f"f65_s_hclass_{_j}", "receivable") == "recapture":
+                        _h5.number_input("Recapture cap ($)", min_value=0.0, step=10_000.0,
+                                         format="%.2f", key=f"f65_s_hcap_{_j}")
+
+            S = f65_sale()
+            _R = S["r"]
+            _seller_name = _names[S["seller"]]
+
+            st.markdown("### Results")
+            _ar = _R["amount_realized"]
+            st.markdown(
+                f"<div style='overflow-x:auto'><table style='width:100%;"
+                f"border-collapse:collapse;font-size:0.85rem'>"
+                f"<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                f"<th style='padding:6px 8px;text-align:left'>Step</th>"
+                f"<th style='padding:6px 8px;text-align:right'>Amount</th></tr>"
+                f"<tr><td style='padding:5px 8px'>Cash received</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{_ar['cash']:,.0f}</td></tr>"
+                f"<tr><td style='padding:5px 8px'>Property received, at value</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{_ar['property']:,.0f}</td></tr>"
+                f"<tr style='background:#eef2f7'><td style='padding:5px 8px'>"
+                f"Share of liabilities relieved — <b>§752(d)</b></td>"
+                f"<td style='padding:5px 8px;text-align:right'>{_ar['debt_relief']:,.0f}</td></tr>"
+                f"<tr style='font-weight:700'><td style='padding:5px 8px'>"
+                f"Amount realised</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{_ar['total']:,.0f}</td></tr>"
+                f"<tr><td style='padding:5px 8px'>Less outside basis</td>"
+                f"<td style='padding:5px 8px;text-align:right'>"
+                f"({_R['outside_basis']:,.0f})</td></tr>"
+                f"<tr style='font-weight:700'><td style='padding:5px 8px'>Total gain (loss)</td>"
+                f"<td style='padding:5px 8px;text-align:right'>{_R['total_gain']:,.0f}</td></tr>"
+                f"<tr style='background:#eef2f7;font-weight:600'>"
+                f"<td style='padding:5px 8px'>Ordinary income — <b>§751(a)</b></td>"
+                f"<td style='padding:5px 8px;text-align:right'>{_R['ordinary_751a']:,.0f}</td></tr>"
+                f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
+                f"<td style='padding:6px 8px'>{_R['character']} — <b>§741</b></td>"
+                f"<td style='padding:6px 8px;text-align:right'>{_R['capital_741']:,.0f}</td></tr>"
+                f"</table></div>", unsafe_allow_html=True)
+
+            if _R["ordinary_with_capital_loss"]:
+                st.error(
+                    f"**{_seller_name} reports \\${_R['ordinary_751a']:,.0f} of ordinary "
+                    f"income and a capital loss of \\${abs(_R['capital_741']):,.0f}, on a "
+                    f"sale that produced \\${_R['total_gain']:,.0f} of gain overall.** "
+                    f"§751(a) takes its share first and §741 gets the residual, so the two "
+                    f"halves are taxed at different rates and the capital loss is subject "
+                    f"to the ordinary capital loss limits. This is the pattern the topic is "
+                    f"examined on.")
+
+            if _R["hot_rows"]:
+                _hr = "".join(
+                    f"<tr><td style='padding:5px 8px'>{h['name']}</td>"
+                    f"<td style='padding:5px 8px'>{HOT_LABELS[h['klass']]}</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>"
+                    f"{h['partnership_gain']:,.0f}</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>"
+                    f"{h['partner_share']:,.0f}</td></tr>" for h in _R["hot_rows"])
+                st.markdown("### §751 assets and the seller's share")
+                st.markdown(
+                    "<div style='overflow-x:auto'><table style='width:100%;"
+                    "border-collapse:collapse;font-size:0.85rem'>"
+                    "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                    "<th style='padding:6px 8px;text-align:left'>Asset</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Class</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Gain at the "
+                    "partnership</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Seller's share</th></tr>"
+                    + _hr + "</table></div>", unsafe_allow_html=True)
+                irc([
+                    "<span style='color:#C53030'><b>Inventory does not have to be "
+                    "substantially appreciated on a sale.</b> That test is in §751(b) and "
+                    "applies to disproportionate distributions. Under §751(a) any inventory "
+                    "item counts, however small the gain. This is the most common error on "
+                    "the topic.</span>",
+                    "<b>A hot asset standing at a loss does not shelter another.</b> Each "
+                    "item is measured on its own, so a bad receivable does not reduce the "
+                    "ordinary income coming out of a good one.",
+                ])
+
+            if _R["form_8308_required"]:
+                st.warning("**Form 8308 is required.** The partnership must file it because "
+                           "the transfer involved §751(a) property, and must give a copy to "
+                           "both the transferor and the transferee. The seller has to "
+                           "notify the partnership of the transfer under §6050K.")
+
+            st.markdown("### The buyer's side")
+            _bb, _adj = S["buyer_basis"], S["adj"]
+            st.number_input("Buyer's share of the partnership's inside basis ($)",
+                            min_value=0.0, step=10_000.0, format="%.2f", key="f65_s_inside")
+            _adj = f65_sale()["adj"]
+            _v1, _v2 = st.columns(2)
+            _v1.metric("Buyer's outside basis — §742 and §1012",
+                       f"\\${_bb['outside_basis']:,.0f}",
+                       f"cost {_bb['cost']:,.0f} + debt {_bb['liabilities']:,.0f}",
+                       delta_color="off")
+            _v2.metric("§743(b) adjustment", f"\\${_adj['adjustment']:,.0f}",
+                       "mandatory — §743(d)" if _adj["mandatory"]
+                       else "§754 election in effect" if _adj["applies"]
+                       else f"not made; would be {_adj['potential_adjustment']:,.0f}",
+                       delta_color="off")
+            (st.warning if _adj["applies"] else st.info)(_adj["note"])
+
+            if S["c704"]["transferred"]:
+                st.markdown("### §704(c) follows the interest")
+                st.info(f"**\\${S['c704']['transferred']:,.0f} of net unrecognised "
+                        f"§704(c) gain moves from {_seller_name} to "
+                        f"{_names[S['buyer']]}.** {S['c704']['note']}")
+
+            if _sq("f65_qs_foreign"):
+                st.error("**§1446(f) withholding.** The transferee must withhold **10% of "
+                         "the amount realised** unless the transferor certifies it is not a "
+                         "foreign person or an exception applies. If the transferee fails "
+                         "to withhold, the partnership itself becomes liable.")
+
+            st.markdown("### Where these figures go")
+            st.markdown(
+                "<div style='overflow-x:auto'><table style='width:100%;"
+                "border-collapse:collapse;font-size:0.84rem'>"
+                "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                "<th style='padding:6px 8px;text-align:left'>Figure</th>"
+                "<th style='padding:6px 8px;text-align:left'>Carried to</th></tr>"
+                "<tr><td style='padding:5px 8px'>Net unrecognised §704(c) gain</td>"
+                "<td style='padding:5px 8px'>Schedule K-1 <b>Item N</b> — moved from the "
+                "seller to the buyer under Reg. §1.704-3(a)(7)</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>Buyer's outside "
+                "basis</td><td style='padding:5px 8px'>Opening basis on the <b>🧮 Outside "
+                "Basis</b> page for the incoming partner</td></tr>"
+                "<tr><td style='padding:5px 8px'>§751(a) ordinary income</td>"
+                "<td style='padding:5px 8px'><b>Form 8308</b>, and the seller's own return "
+                "— it is not a Schedule K item</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>§743(b) "
+                "adjustment</td><td style='padding:5px 8px'>The buyer's own share of inside "
+                "basis, spread across the assets under §755 — a partner-specific "
+                "adjustment that never touches anyone else</td></tr>"
+                "<tr><td style='padding:5px 8px'>Gain or loss on the sale</td>"
+                "<td style='padding:5px 8px'>Nowhere on Form 1065 — it is the seller's "
+                "gain, reported on the seller's own return</td></tr>"
+                "</table></div>", unsafe_allow_html=True)
+
+            irc([
+                "<b>§706(c)(2): the selling partner's tax year closes</b> with respect to "
+                "them on the sale. The year's items are split between seller and buyer, "
+                "either by an interim closing of the books or by proration — so one "
+                "interest can generate two K-1s in the same year.",
+                "<b>Without a §754 election the buyer is taxed twice</b> on the same gain: "
+                "once in the price they paid, and again when the partnership sells the "
+                "asset and allocates them a share of the inside gain. §743(b) exists to "
+                "stop that, and §743(d) makes it mandatory where the partnership has a "
+                "substantial built-in loss so the rule cannot be used selectively.",
+                "<b>Compare a distribution.</b> Selling an interest reaches every asset the "
+                "partnership holds through §751(a); a distribution only reaches the assets "
+                "that actually moved, through §751(b). Same policy, different machinery.",
+            ])
+
+    elif f1065_section == "⚖️ §754 Election — §743(b) & §734(b)":
+        st.markdown("## The §754 Election — §743(b), §734(b) and §755")
+        st.markdown(
+            "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            "margin:8px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            "A partnership has two sets of basis. <b>Outside basis</b> is what a partner "
+            "has in the interest; <b>inside basis</b> is what the partnership has in its "
+            "assets. They start equal and drift apart the moment an interest is sold above "
+            "the seller's basis, or property leaves at a capped basis. The §754 election is "
+            "what pulls them back together."
+            "</div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>§743(b) fixes a transfer.</b> The buyer paid market value, but without an "
+            "election the partnership's basis in its assets does not move — so when the "
+            "partnership later sells, the buyer is allocated a share of gain they already "
+            "paid for once in the price.",
+            "<b>§734(b) fixes a distribution.</b> Basis that the §732(a)(2) cap destroyed, "
+            "and gain the distributee had to recognise, are put back into the assets the "
+            "partnership still holds.",
+            "<span style='color:#C53030'><b>The two adjustments are one-sided in different "
+            "ways.</b> A §743(b) adjustment belongs to the transferee alone and is "
+            "invisible to every other partner. A §734(b) adjustment belongs to the "
+            "partnership and is shared by everyone.</span>",
+            "<b>The election is sticky.</b> Once made it binds every future year until the "
+            "Service consents to a revocation — which is why a partnership holding "
+            "depreciated assets thinks carefully, since the adjustment cuts both ways.",
+        ])
+
+        st.markdown("### The election")
+        st.radio("Is a §754 election in effect for this partnership?",
+                 ["No", "Yes"], horizontal=True, key="f65_754")
+        st.caption("This is Schedule B question 10a. It is a partnership-level choice, so "
+                   "every page that depends on it reads this answer rather than asking "
+                   "again.")
+
+        st.markdown("### Which adjustment is in issue?")
+        _wa, _wb = st.columns(2)
+        with _wa:
+            st.radio("**A** · Was an interest transferred this year? — §743(b)",
+                     ["No", "Yes"], horizontal=True, key="f65_q754_transfer")
+        with _wb:
+            st.radio("**B** · Was there a distribution this year? — §734(b)",
+                     ["No", "Yes"], horizontal=True, key="f65_q754_dist")
+
+        _e754 = st.session_state.get("f65_754", "No") == "Yes"
+        _q754 = lambda k: st.session_state.get(k, "No") == "Yes"
+
+        if not _q754("f65_q754_transfer") and not _q754("f65_q754_dist"):
+            st.info("Neither a transfer nor a distribution, so there is nothing for §743(b) "
+                    "or §734(b) to adjust this year. The election itself still stands and "
+                    "still binds future years.")
+        else:
+            st.markdown("### The partnership's assets")
+            st.caption("§755 allocates every adjustment between two classes — ordinary "
+                       "income property, and capital gain and §1231 property — so the "
+                       "assets have to be classified before anything can be spread.")
+            st.number_input("Number of assets", min_value=1, max_value=6, step=1,
+                            key="f65_754_n_assets")
+            _A754 = []
+            for _k in range(int(st.session_state.get("f65_754_n_assets", 2))):
+                _a1, _a2, _a3, _a4 = st.columns([3, 2, 2, 3])
+                _a1.text_input(f"Asset {_k + 1}", key=f"f65_754_aname_{_k}")
+                _a2.number_input("Basis ($)", min_value=0.0, step=10_000.0,
+                                 format="%.2f", key=f"f65_754_abasis_{_k}")
+                _a3.number_input("Value ($)", min_value=0.0, step=10_000.0,
+                                 format="%.2f", key=f"f65_754_afmv_{_k}")
+                _a4.selectbox("Class under §755", [C754, O754],
+                              format_func=lambda v: {
+                                  C754: "Capital gain and §1231 property",
+                                  O754: "Ordinary income property"}[v],
+                              key=f"f65_754_aclass_{_k}")
+                _A754.append({
+                    "name": st.session_state.get(f"f65_754_aname_{_k}") or f"Asset {_k + 1}",
+                    "basis": st.session_state.get(f"f65_754_abasis_{_k}", 0.0),
+                    "fmv": st.session_state.get(f"f65_754_afmv_{_k}", 0.0),
+                    "klass": st.session_state.get(f"f65_754_aclass_{_k}", C754)})
+
+            _inside = sum(a["basis"] for a in _A754)
+            _value = sum(a["fmv"] for a in _A754)
+
+            # ── §743(b) ──────────────────────────────────────────────────────
+            if _q754("f65_q754_transfer"):
+                st.markdown("### §743(b) — the transferee's adjustment")
+                _bb754 = SALE65["buyer_basis"]["outside_basis"]
+                st.markdown(
+                    f"<div class='adj-auto'>Buyer's outside basis "
+                    f"<b>${_bb754:,.0f}</b> — carried from the "
+                    f"<b>🤝 Sale of an Interest</b> page</div>",
+                    unsafe_allow_html=True)
+
+                st.markdown("**The transferee's share of inside basis — "
+                            "Reg. §1.743-1(d)**")
+                st.caption("Not a percentage of the balance sheet. Imagine the partnership "
+                           "sells everything at value for cash and liquidates: the cash "
+                           "this partner walks away with, plus the tax loss they would be "
+                           "allocated on that sale and minus the tax gain, is their "
+                           "previously taxed capital.")
+                _p1, _p2, _p3, _p4 = st.columns(4)
+                _p1.number_input("Cash on a hypothetical liquidation ($)", min_value=0.0,
+                                 step=10_000.0, format="%.2f", key="f65_754_hyp_cash")
+                _p2.number_input("Tax loss allocated on that sale ($)", min_value=0.0,
+                                 step=10_000.0, format="%.2f", key="f65_754_hyp_loss")
+                _p3.number_input("Tax gain allocated on that sale ($)", min_value=0.0,
+                                 step=10_000.0, format="%.2f", key="f65_754_hyp_gain")
+                _p4.number_input("Share of partnership liabilities ($)", min_value=0.0,
+                                 step=10_000.0, format="%.2f", key="f65_754_liab_share")
+
+                _PTC = calc_previously_taxed_capital(
+                    hypothetical_cash=st.session_state.get("f65_754_hyp_cash", 0.0),
+                    tax_loss_allocated=st.session_state.get("f65_754_hyp_loss", 0.0),
+                    tax_gain_allocated=st.session_state.get("f65_754_hyp_gain", 0.0),
+                    liability_share=st.session_state.get("f65_754_liab_share", 0.0))
+
+                st.number_input("Loss this transferee would be allocated on a sale at value "
+                                "— §743(d) test ($)", min_value=0.0, step=10_000.0,
+                                format="%.2f", key="f65_754_transferee_loss")
+                _SBIL = calc_substantial_built_in_loss(
+                    inside_basis=_inside, fmv=_value,
+                    transferee_loss_share=st.session_state.get("f65_754_transferee_loss", 0.0))
+
+                _ADJ743 = calc_743b_full(
+                    outside_basis=_bb754,
+                    share_of_inside_basis=_PTC["share_of_inside_basis"],
+                    election=_e754, substantial_built_in_loss=_SBIL["mandatory"])
+
+                _g1, _g2, _g3 = st.columns(3)
+                _g1.metric("Previously taxed capital",
+                           f"\\${_PTC['previously_taxed_capital']:,.0f}")
+                _g2.metric("Share of inside basis",
+                           f"\\${_PTC['share_of_inside_basis']:,.0f}",
+                           f"+ liabilities {_PTC['liability_share']:,.0f}",
+                           delta_color="off")
+                _g3.metric("§743(b) adjustment", f"\\${_ADJ743['adjustment']:,.0f}",
+                           "mandatory — §743(d)" if _ADJ743["mandatory"]
+                           else "election in effect" if _ADJ743["applies"]
+                           else f"no election; would be {_ADJ743['potential']:,.0f}",
+                           delta_color="off")
+
+                if _SBIL["mandatory"]:
+                    st.error("**§743(d): the adjustment is mandatory.** "
+                             + ("The partnership's inside basis exceeds the value of its "
+                                "assets by more than $250,000. " if _SBIL["entity_test"] else "")
+                             + ("This transferee alone would be allocated more than "
+                                "$250,000 of loss on a sale at value — the test added in "
+                                "2017 to stop a partnership passing the entity test while "
+                                "handing one incoming partner a large built-in loss."
+                                if _SBIL["transferee_test"] else "")
+                             + " No election is needed and none can be avoided.")
+                elif not _e754:
+                    st.warning(f"**No election, so nothing moves.** The buyer inherits the "
+                               f"seller's share of inside basis and will be taxed a second "
+                               f"time on \\${abs(_ADJ743['potential']):,.0f} of gain they "
+                               f"already paid for in the price.")
+
+                if _ADJ743["applies"] and abs(_ADJ743["adjustment"]) > 0.5:
+                    _AL743 = calc_755_743b(_ADJ743["adjustment"], _A754,
+                                           transferee_pct=f65_partners()[
+                                               SALE65["buyer"]]["ratio"])
+                    st.markdown("**§755 — spreading it across the assets**")
+                    _r743 = "".join(
+                        f"<tr><td style='padding:5px 8px'>{a['name']}</td>"
+                        f"<td style='padding:5px 8px'>"
+                        f"{'Ordinary' if a['klass'] == O754 else 'Capital and §1231'}</td>"
+                        f"<td style='padding:5px 8px;text-align:right'>{a['basis']:,.0f}</td>"
+                        f"<td style='padding:5px 8px;text-align:right'>{a['fmv']:,.0f}</td>"
+                        f"<td style='padding:5px 8px;text-align:right'>"
+                        f"{_AL743['allocations'].get(a['name'], 0.0):,.0f}</td>"
+                        f"<td style='padding:5px 8px;text-align:right;font-weight:600'>"
+                        f"{a['basis'] + _AL743['allocations'].get(a['name'], 0.0):,.0f}"
+                        f"</td></tr>" for a in _A754)
+                    st.markdown(
+                        "<div style='overflow-x:auto'><table style='width:100%;"
+                        "border-collapse:collapse;font-size:0.84rem'>"
+                        "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                        "<th style='padding:6px 8px;text-align:left'>Asset</th>"
+                        "<th style='padding:6px 8px;text-align:left'>§755 class</th>"
+                        "<th style='padding:6px 8px;text-align:right'>Common basis</th>"
+                        "<th style='padding:6px 8px;text-align:right'>Value</th>"
+                        "<th style='padding:6px 8px;text-align:right'>§743(b) "
+                        "adjustment</th>"
+                        "<th style='padding:6px 8px;text-align:right'>Transferee's "
+                        "basis</th></tr>" + _r743 + "</table></div>",
+                        unsafe_allow_html=True)
+                    _h1, _h2 = st.columns(2)
+                    _h1.metric("To ordinary income property",
+                               f"\\${_AL743['to_ordinary']:,.0f}")
+                    _h2.metric("To capital and §1231 property — the residual",
+                               f"\\${_AL743['to_capital']:,.0f}")
+                    if _AL743["capital_is_opposite"]:
+                        st.error("**The capital class moves the opposite way to the total.** "
+                                 "§755 gives the ordinary class the income it would be "
+                                 "allocated on a hypothetical sale, and the capital class "
+                                 "takes whatever is left — so a positive §743(b) adjustment "
+                                 "can still push the capital assets down.")
+                    st.caption("The last column is the transferee's basis alone. Every other "
+                               "partner still sees the common basis, and the partnership "
+                               "keeps two sets of depreciation schedules for the asset.")
+
+            # ── §734(b) ──────────────────────────────────────────────────────
+            if _q754("f65_q754_dist"):
+                st.markdown("### §734(b) — the partnership's adjustment")
+                _dgain = sum(r["d"]["gain_731"] for r in DIST65["rows"])
+                _dlost = sum(r["d"]["basis_lost"] for r in DIST65["rows"])
+                _lgain = LIQ65["d"]["gain_731"] if LIQ65["on"] else 0.0
+                _lloss = LIQ65["d"]["loss_731"] if LIQ65["on"] else 0.0
+                # §732(b) substitutes basis rather than capping it, so a liquidation can
+                # push inside basis either way: a step-up to the departing partner removes
+                # basis from the partnership, a step-down adds it back.
+                _lstep = ((LIQ65["d"]["step_down"] - LIQ65["d"]["step_up"])
+                          if LIQ65["on"] else 0.0)
+                st.markdown(
+                    f"<div class='adj-auto'>Current distributions — gain "
+                    f"<b>${_dgain:,.0f}</b>, basis destroyed by the §732(a)(2) cap "
+                    f"<b>${_dlost:,.0f}</b>. Liquidation — gain <b>${_lgain:,.0f}</b>, "
+                    f"loss <b>${_lloss:,.0f}</b>, §732(b) basis shift "
+                    f"<b>${_lstep:,.0f}</b>. All carried from the "
+                    f"<b>💸 Current Distributions</b> and <b>🏁 Liquidating a Partner</b> "
+                    f"pages</div>", unsafe_allow_html=True)
+                _dgain += _lgain
+                _dlost += _lstep
+
+                st.selectbox("Class of the property that was distributed",
+                             [C754, O754],
+                             format_func=lambda v: {
+                                 C754: "Capital gain and §1231 property",
+                                 O754: "Ordinary income property"}[v],
+                             key="f65_754_dist_class")
+
+                _pre734 = calc_734b(gain_recognised=_dgain, loss_recognised=_lloss,
+                                    partnership_basis_in_distributed=_dlost,
+                                    distributee_basis=0.0, election=True)
+                _SBR = calc_substantial_basis_reduction(_pre734["potential"])
+                _ADJ734 = calc_734b(gain_recognised=_dgain, loss_recognised=_lloss,
+                                    partnership_basis_in_distributed=_dlost,
+                                    distributee_basis=0.0, election=_e754,
+                                    substantial_basis_reduction=_SBR["mandatory"])
+
+                _j1, _j2, _j3 = st.columns(3)
+                _j1.metric("From gain recognised — §731(a)",
+                           f"\\${_ADJ734['from_gain_or_loss']:,.0f}")
+                _j2.metric("From the basis the cap destroyed",
+                           f"\\${_ADJ734['from_basis_difference']:,.0f}")
+                _j3.metric("§734(b) adjustment", f"\\${_ADJ734['adjustment']:,.0f}",
+                           "mandatory — §734(d)" if _ADJ734["mandatory"]
+                           else "election in effect" if _ADJ734["applies"]
+                           else f"no election; would be {_ADJ734['potential']:,.0f}",
+                           delta_color="off")
+
+                if not _ADJ734["applies"] and abs(_ADJ734["potential"]) > 0.5:
+                    st.warning(f"**No election, so the basis stays lost.** "
+                               f"\\${abs(_ADJ734['potential']):,.0f} that the §732(a)(2) "
+                               f"cap destroyed, or that the distributee was taxed on, "
+                               f"simply disappears from the partnership's assets. This is "
+                               f"the concrete answer to what happens to basis lost on a "
+                               f"distribution.")
+
+                if _ADJ734["applies"] and abs(_ADJ734["adjustment"]) > 0.5:
+                    _AL734 = calc_755_734b(
+                        _ADJ734["from_gain_or_loss"], _ADJ734["from_basis_difference"],
+                        st.session_state.get("f65_754_dist_class", C754), _A754)
+                    _r734 = "".join(
+                        f"<tr><td style='padding:5px 8px'>{a['name']}</td>"
+                        f"<td style='padding:5px 8px'>"
+                        f"{'Ordinary' if a['klass'] == O754 else 'Capital and §1231'}</td>"
+                        f"<td style='padding:5px 8px;text-align:right'>{a['basis']:,.0f}</td>"
+                        f"<td style='padding:5px 8px;text-align:right'>"
+                        f"{_AL734['allocations'].get(a['name'], 0.0):,.0f}</td>"
+                        f"<td style='padding:5px 8px;text-align:right;font-weight:600'>"
+                        f"{a['basis'] + _AL734['allocations'].get(a['name'], 0.0):,.0f}"
+                        f"</td></tr>" for a in _A754)
+                    st.markdown("**§755 — spreading it across the assets**")
+                    st.markdown(
+                        "<div style='overflow-x:auto'><table style='width:100%;"
+                        "border-collapse:collapse;font-size:0.84rem'>"
+                        "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                        "<th style='padding:6px 8px;text-align:left'>Asset</th>"
+                        "<th style='padding:6px 8px;text-align:left'>§755 class</th>"
+                        "<th style='padding:6px 8px;text-align:right'>Basis before</th>"
+                        "<th style='padding:6px 8px;text-align:right'>§734(b) "
+                        "adjustment</th>"
+                        "<th style='padding:6px 8px;text-align:right'>Basis after</th>"
+                        "</tr>" + _r734 + "</table></div>", unsafe_allow_html=True)
+                    if _AL734["suspended"] > 0.5:
+                        st.warning(
+                            f"**\\${_AL734['suspended']:,.0f} of the decrease cannot be "
+                            f"allocated.** §755(c) does not permit a negative basis, so a "
+                            f"decrease the class cannot absorb is held in suspense and "
+                            f"applied when the partnership next acquires property of that "
+                            f"class. It is not discarded.")
+                    irc([
+                        "<b>The two sources go to different places.</b> Reg. §1.755-1(c): "
+                        "an adjustment arising from <b>gain or loss recognised</b> goes "
+                        "only to capital gain property, because the distributee's gain was "
+                        "capital. An adjustment arising from the <b>basis of the "
+                        "distributed property</b> goes to property of the <b>same class</b> "
+                        "as what left — ordinary basis is restored to ordinary assets.",
+                        "<b>This adjustment is shared.</b> Unlike §743(b), a §734(b) "
+                        "adjustment changes the partnership's common basis, so every "
+                        "partner's future depreciation and gain moves with it.",
+                    ])
+
+            st.markdown("### Where these figures go")
+            st.markdown(
+                "<div style='overflow-x:auto'><table style='width:100%;"
+                "border-collapse:collapse;font-size:0.84rem'>"
+                "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                "<th style='padding:6px 8px;text-align:left'>Figure</th>"
+                "<th style='padding:6px 8px;text-align:left'>Carried to</th></tr>"
+                "<tr><td style='padding:5px 8px'>The election itself</td>"
+                "<td style='padding:5px 8px'><b>Schedule B question 10a</b>, and the "
+                "<b>🤝 Sale of an Interest</b> page reads it rather than asking again"
+                "</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>§743(b) "
+                "adjustment</td><td style='padding:5px 8px'>Schedule K-1 <b>box 11 code F</b> "
+                "if positive, <b>box 13 code V</b> if negative — reported to that partner "
+                "alone</td></tr>"
+                "<tr><td style='padding:5px 8px'>§734(b) adjustment</td>"
+                "<td style='padding:5px 8px'>The partnership's own asset basis, so it flows "
+                "through depreciation on <b>page 1 line 16a</b> and through gain on a later "
+                "sale</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>Adjusted asset "
+                "basis</td><td style='padding:5px 8px'>Schedule L carries assets at "
+                "<b>book</b>, so a §743(b) or §734(b) adjustment never appears there — it "
+                "is a tax-basis figure only</td></tr>"
+                "</table></div>", unsafe_allow_html=True)
+
+            irc([
+                "<b>The election is made on a timely filed return</b> for the year of the "
+                "transfer or distribution, with a statement under Reg. §1.754-1(b). It "
+                "binds every future year until the Service consents to a revocation.",
+                "<span style='color:#C53030'><b>It is not free.</b> An election that "
+                "produces a welcome step-up on one transfer will produce an unwelcome "
+                "step-down on the next, and the partnership has to track a separate basis "
+                "and depreciation schedule for every partner who has one.</span>",
+                "<b>§743(d) and §734(d) remove the choice</b> where the numbers are large "
+                "and pointing downward — a substantial built-in loss over $250,000 on a "
+                "transfer, or a substantial basis reduction over $250,000 on a "
+                "distribution. The election cannot be used selectively to preserve losses.",
+            ])
+
+    elif f1065_section == "🏁 Liquidating a Partner — §736":
+        st.markdown("## Liquidating a Partner's Interest — §736, §731(a)(2), §732(b)")
+        st.markdown(
+            "<div style='background:#EBF4FF;border-left:4px solid #2C5282;padding:10px 14px;"
+            "margin:8px 0;color:#2C5282;-webkit-text-fill-color:#2C5282;'>"
+            "Three rules invert when the distribution liquidates the interest instead of "
+            "reducing it. <b>Loss becomes possible.</b> <b>Basis is substituted rather than "
+            "capped</b>, so it can go up. And the payment <b>splits in two</b> under §736, "
+            "which moves money between a capital and an ordinary bucket on both sides at "
+            "once."
+            "</div>", unsafe_allow_html=True)
+
+        irc([
+            "<b>§736(b):</b> payments for the retiring partner's interest in partnership "
+            "<b>property</b>. Treated as a distribution, so §731 and §732 apply and the "
+            "partner has capital gain only to the extent money exceeds basis.",
+            "<b>§736(a):</b> everything else. Ordinary income to the retiring partner, and "
+            "the partnership either deducts it as a guaranteed payment or allocates less "
+            "income to the remaining partners — so the two halves are a zero-sum bargain "
+            "between the leaver and the stayers.",
+            "<span style='color:#C53030'><b>§731(a)(2): loss is possible here and nowhere "
+            "else.</b> Only where money, unrealised receivables and inventory are all that "
+            "comes out — because those are the only assets whose basis cannot be increased, "
+            "so they are the only case where basis has nowhere left to go.</span>",
+            "<b>§732(b): the basis is substituted.</b> The distributee takes the whole "
+            "outside basis less money, so property can be stepped <i>up</i> — the opposite "
+            "of the §732(a)(2) cap on a current distribution.",
+        ])
+
+        st.markdown("### Questionnaire")
+        st.radio("**1** · Did a partner's entire interest get liquidated this year?",
+                 ["No", "Yes"], horizontal=True, key="f65_ql_any")
+        _lq1 = st.session_state.get("f65_ql_any", "No") == "Yes"
+        if _lq1:
+            _la, _lb = st.columns(2)
+            with _la:
+                st.radio("**2** · Is capital a material income-producing factor for this "
+                         "partnership?", ["No", "Yes"], horizontal=True,
+                         key="f65_ql_service_inv")
+                st.radio("**3** · Was the retiring partner a general partner?",
+                         ["No", "Yes"], horizontal=True, key="f65_ql_gp")
+                st.radio("**4** · Does the partnership agreement provide for a payment for "
+                         "goodwill?", ["No", "Yes"], horizontal=True,
+                         key="f65_ql_goodwill_agmt")
+            with _lb:
+                st.radio("**5** · Is the §736(a) payment determined by reference to "
+                         "partnership income?", ["No", "Yes"], horizontal=True,
+                         key="f65_ql_income_geared")
+                st.radio("**6** · Did the partner receive property as well as money?",
+                         ["No", "Yes"], horizontal=True, key="f65_ql_property")
+            # Question 2 is asked the way the form asks it; the statute is phrased in the
+            # negative, so it is inverted once here rather than at every use.
+            st.session_state["f65_ql_service"] = (
+                "Yes" if st.session_state.get("f65_ql_service_inv", "No") == "No" else "No")
+        else:
+            st.caption("Questions 2 to 6 describe a liquidation and appear once question 1 "
+                       "is answered Yes.")
+
+        _lq = lambda k: (st.session_state.get(k, "No") == "Yes") and _lq1
+
+        if not _lq1:
+            st.info("No partner retired this year, so §736 does not apply and no interest "
+                    "terminates. Every K-1 is an ordinary continuing K-1.")
+        else:
+            _LR = f65_partners()
+            st.markdown("### The payment")
+            _m1, _m2c, _m3 = st.columns(3)
+            _m1.selectbox("Retiring partner", list(range(len(_LR))),
+                          format_func=lambda i: _LR[i]["name"], key="f65_l_partner")
+            _m2c.number_input("Total payment ($)", min_value=0.0, step=10_000.0,
+                              format="%.2f", key="f65_l_total")
+            _m3.number_input("Retiring partner's outside basis ($)", min_value=0.0,
+                             step=10_000.0, format="%.2f", key="f65_l_basis")
+
+            st.markdown("**How much of the payment buys a share of which assets?**")
+            _n1, _n2, _n3 = st.columns(3)
+            _n1.number_input("Share of unrealised receivables ($)", min_value=0.0,
+                             step=10_000.0, format="%.2f", key="f65_l_recv")
+            _n2.number_input("Share of goodwill ($)", min_value=0.0, step=10_000.0,
+                             format="%.2f", key="f65_l_goodwill")
+            _n3.number_input("Share of all other partnership property ($)", min_value=0.0,
+                             step=10_000.0, format="%.2f", key="f65_l_other_prop")
+
+            st.markdown("**What actually came out**")
+            _o1, _o2 = st.columns(2)
+            _o1.number_input("Cash received ($)", min_value=0.0, step=10_000.0,
+                             format="%.2f", key="f65_l_cash")
+            _o2.number_input("Reduction in the share of liabilities — §752(b) ($)",
+                             min_value=0.0, step=10_000.0, format="%.2f",
+                             key="f65_l_relief")
+            if _lq("f65_ql_property"):
+                for _j in range(2):
+                    _q1c, _q2c, _q3c, _q4c = st.columns([3, 2, 2, 3])
+                    _q1c.text_input(f"Property {_j + 1} — description",
+                                    key=f"f65_l_pname_{_j}")
+                    _q2c.number_input("Partnership's basis ($)", min_value=0.0,
+                                      step=10_000.0, format="%.2f",
+                                      key=f"f65_l_pbasis_{_j}")
+                    _q3c.number_input("Fair market value ($)", min_value=0.0,
+                                      step=10_000.0, format="%.2f",
+                                      key=f"f65_l_pfmv_{_j}")
+                    _q4c.selectbox("Class", ["capital", "1231", "inventory", "receivable"],
+                                   format_func=lambda v: {
+                                       "capital": "Capital asset",
+                                       "1231": "§1231 property",
+                                       "inventory": "Inventory — hot",
+                                       "receivable": "Unrealised receivable — hot"}[v],
+                                   key=f"f65_l_pclass_{_j}")
+
+            L = f65_liquidation()
+            _SP, _CH, _LD = L["split"], L["char"], L["d"]
+            _lname = _LR[L["partner"]]["name"]
+
+            st.markdown("### §736 — splitting the payment")
+            _s1, _s2, _s3 = st.columns(3)
+            _s1.metric("§736(b) — for partnership property",
+                       f"\\${_SP['section_736b']:,.0f}", "distribution — §731 and §732",
+                       delta_color="off")
+            _s2.metric("§736(a) — everything else",
+                       f"\\${_SP['section_736a']:,.0f}",
+                       f"ordinary income — {_CH['kind']}", delta_color="off")
+            _s3.metric("§736(b)(2) carve-out",
+                       "Applies" if _SP["carve_out_applies"] else "Does not apply",
+                       delta_color="off")
+            for _rz in _SP["reasons"]:
+                st.info(_rz)
+            st.caption(_CH["note"])
+
+            if _SP["carve_out_applies"] and not _lq("f65_ql_goodwill_agmt") \
+                    and st.session_state.get("f65_l_goodwill", 0.0) > 0:
+                st.warning("**A single sentence in the partnership agreement moves this "
+                           "money.** With a goodwill provision the payment is §736(b) and "
+                           "capital to the leaver; without one it is §736(a), ordinary to "
+                           "the leaver and deductible by the partnership. The two sides "
+                           "want opposite answers, which is why it is negotiated.")
+
+            st.markdown("### §731 and §732 on the §736(b) half")
+            _t1, _t2, _t3, _t4 = st.columns(4)
+            _t1.metric("Money received", f"\\${_LD['money']:,.0f}")
+            _t2.metric("Gain — §731(a)(1)", f"\\${_LD['gain_731']:,.0f}")
+            _t3.metric("Loss — §731(a)(2)", f"\\${_LD['loss_731']:,.0f}",
+                       "available" if _LD["loss_available"] else "blocked — other property "
+                       "came out", delta_color="off")
+            _t4.metric("Basis to substitute — §732(b)",
+                       f"\\${_LD['basis_available']:,.0f}")
+
+            if _LD["loss_731"] > 0.5:
+                st.error(f"**{_lname} recognises a capital loss of "
+                         f"\\${_LD['loss_731']:,.0f} — §731(a)(2).** Only money, "
+                         f"unrealised receivables and inventory came out, and none of those "
+                         f"can absorb a step-up, so the unused basis has nowhere to go and "
+                         f"is recognised. Distribute a single capital asset alongside them "
+                         f"and the loss disappears.")
+            elif not _LD["loss_available"] and _LD["basis_available"] > 0.5:
+                st.info("Other property came out, so §731(a)(2) is unavailable. The unused "
+                        "basis is not lost — §732(b) pushes all of it into that property "
+                        "instead.")
+
+            if _LD["allocations"]:
+                _lr = ""
+                for _pp in L["props"]:
+                    _got = _LD["allocations"].get(_pp["name"], 0.0)
+                    _mv = _got - _pp["basis"]
+                    _lr += (f"<tr><td style='padding:5px 8px'>{_pp['name']}</td>"
+                            f"<td style='padding:5px 8px'>"
+                            f"{'Hot — never stepped up' if _pp['klass'] == 'hot' else 'Other'}"
+                            f"</td>"
+                            f"<td style='padding:5px 8px;text-align:right'>"
+                            f"{_pp['basis']:,.0f}</td>"
+                            f"<td style='padding:5px 8px;text-align:right'>"
+                            f"{_pp['fmv']:,.0f}</td>"
+                            f"<td style='padding:5px 8px;text-align:right'>"
+                            f"{_mv:,.0f}</td>"
+                            f"<td style='padding:5px 8px;text-align:right;font-weight:600'>"
+                            f"{_got:,.0f}</td></tr>")
+                st.markdown("**§732(b) and §732(c) — basis in the partner's hands**")
+                st.markdown(
+                    "<div style='overflow-x:auto'><table style='width:100%;"
+                    "border-collapse:collapse;font-size:0.84rem'>"
+                    "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                    "<th style='padding:6px 8px;text-align:left'>Property</th>"
+                    "<th style='padding:6px 8px;text-align:left'>Class</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Partnership's basis</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Value</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Step up (down)</th>"
+                    "<th style='padding:6px 8px;text-align:right'>Basis in the partner's "
+                    "hands</th></tr>" + _lr + "</table></div>", unsafe_allow_html=True)
+                irc([
+                    "<b>§732(c)(2)(B): a step-up goes to appreciated property first</b>, in "
+                    "proportion to and limited by each property's appreciation. Anything "
+                    "left over is then spread in proportion to fair market value across "
+                    "<b>all</b> the properties — so an appreciated asset can finish above "
+                    "its own value.",
+                    "<b>The decrease rule is the mirror.</b> §732(c)(3) sends a step-down "
+                    "to unrealised depreciation first. Basis is always pushed towards "
+                    "value, from whichever side it happens to be on.",
+                    "<span style='color:#C53030'><b>Hot assets are never stepped up.</b> "
+                    "They can only ever take the partnership's own basis, which is exactly "
+                    "why a liquidation of nothing but money and hot assets is the one case "
+                    "that produces a loss.</span>",
+                ])
+
+            st.markdown("### Where these figures go")
+            _gp736 = L["guaranteed_payment"]
+            st.markdown(
+                "<div style='overflow-x:auto'><table style='width:100%;"
+                "border-collapse:collapse;font-size:0.84rem'>"
+                "<tr style='background:#EBF4FF;color:#1B3A6B'>"
+                "<th style='padding:6px 8px;text-align:left'>Figure</th>"
+                "<th style='padding:6px 8px;text-align:left'>Carried to</th></tr>"
+                f"<tr><td style='padding:5px 8px'>§736(a) payment — "
+                f"${_SP['section_736a']:,.0f}</td>"
+                f"<td style='padding:5px 8px'>"
+                + (f"<b>Schedule K line 4a</b> as a guaranteed payment, and deducted at "
+                   f"<b>page 1 line 10</b> — ${_gp736:,.0f} is already in both"
+                   if _gp736 else
+                   "A <b>distributive share</b>, so it reduces the income allocated to the "
+                   "remaining partners rather than being deducted — nothing is added to "
+                   "line 10")
+                + "</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>§736(b) "
+                "payment</td><td style='padding:5px 8px'>Schedule K lines <b>19a</b> and "
+                "<b>19b</b>, and from there Schedule M-2 line 6</td></tr>"
+                "<tr><td style='padding:5px 8px'>Gain, loss and the §732(b) basis shift</td>"
+                "<td style='padding:5px 8px'>The <b>⚖️ §754 Election</b> page, where they "
+                "drive the §734(b) adjustment — a liquidation is where §734(b) usually "
+                "bites hardest</td></tr>"
+                "<tr style='background:#eef2f7'><td style='padding:5px 8px'>The interest "
+                "itself</td><td style='padding:5px 8px'>Schedule K-1 marked <b>final</b>, "
+                "Item L closing at nil, and the partner's tax year closing under "
+                "<b>§706(c)(2)(A)</b></td></tr>"
+                "</table></div>", unsafe_allow_html=True)
+
+            irc([
+                "<b>§736 is a zero-sum bargain.</b> Every dollar moved from §736(b) to "
+                "§736(a) turns the leaver's capital gain into ordinary income and hands the "
+                "remaining partners a deduction. The two sides negotiate the split, and the "
+                "partnership agreement is where it is settled.",
+                "<b>The carve-out narrowed in 1993.</b> It now reaches only a general "
+                "partner in a partnership where capital is not a material income-producing "
+                "factor — a professional firm, in practice. A capital-intensive partnership "
+                "keeps receivables and goodwill in §736(b) whatever the agreement says.",
+                "<b>Compare a sale.</b> A retiring partner who sells to a third party gets "
+                "§741 and §751(a); one who is bought out by the partnership gets §736. The "
+                "economics can be identical and the tax is not, which is the planning point.",
+            ])
+
+    elif f1065_section == "📥 Income (Lines 1–8)":
         st.markdown("## Form 1065 — Income")
         irc([
             "<b>Form 1065 income section:</b> Captures the partnership's gross business activity. Line 22 (ordinary business income) flows to Schedule K line 1 — the non-separately-stated income that has the same character for all partners.",
@@ -6446,21 +8611,30 @@ elif active_form == "🤝 Form 1065":
             _nr = st.session_state.get("f65_liab_nr", 0.0) * _r
             _qn = st.session_state.get("f65_liab_qnre", 0.0) * _r
             _rc = st.session_state.get("f65_liab_rec", 0.0) * _r
-            # Item L runs on §704(b) book figures: contributions and distributions at
-            # value, and the partner's share of the Analysis line.
+            # Item L is tax basis: contributions at adjusted basis net of assumed debt,
+            # and the partner's share of the Analysis line.
             _l_begin = st.session_state.get(f"f65_ca_begin_{_p['i']}", 0.0)
-            _l_contrib = st.session_state.get(f"f65_ca_contrib_{_p['i']}", 0.0)
+            _l_contrib = f65_contributed_capital(_p["i"])
             _l_income = K["analysis"] * _r
             _l_draw = ((st.session_state.get("f65_k_dist_cash", 0.0)
                         + st.session_state.get("f65_k_dist_prop", 0.0)) * _r)
             _l_end = _l_begin + _l_contrib + _l_income - _l_draw
+            _f_row = F721["rows"][_p["i"]]
+            _f_n = f65_item_n(_p["i"])
 
             with st.expander(f"**{_p['name']}** — Items J, K and L", expanded=True):
                 st.number_input("Item L — beginning capital account ($)", step=10_000.0,
                                 format="%.2f", key=f"f65_ca_begin_{_p['i']}")
-                st.number_input("Item L — capital contributed during the year ($)",
-                                min_value=0.0, step=10_000.0, format="%.2f",
-                                key=f"f65_ca_contrib_{_p['i']}")
+                if F721["on"]:
+                    st.markdown(
+                        f"<div class='adj-auto'>Item L — capital contributed "
+                        f"${_l_contrib:,.0f} — carried from the §721 formation page at "
+                        f"tax basis, net of debt the partnership assumed</div>",
+                        unsafe_allow_html=True)
+                else:
+                    st.number_input("Item L — capital contributed during the year ($)",
+                                    min_value=0.0, step=10_000.0, format="%.2f",
+                                    key=f"f65_ca_contrib_{_p['i']}")
                 st.markdown(
                     f"<div style='overflow-x:auto'><table style='width:100%;"
                     f"border-collapse:collapse;font-size:0.85rem'>"
@@ -6489,6 +8663,18 @@ elif active_form == "🤝 Form 1065":
                     f"<tr style='background:#1B3A6B;color:#fff;font-weight:700'>"
                     f"<td style='padding:6px 8px'><b>L</b> — ending capital account</td>"
                     f"<td style='padding:6px 8px;text-align:right'>{_l_end:,.0f}</td></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>M</b> — contributed property "
+                    f"with a built-in gain or loss?</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>"
+                    f"{'Yes' if abs(_f_row['r']['built_in_gain']) > 0.5 else 'No'}</td></tr>"
+                    f"<tr><td style='padding:5px 8px'><b>N</b> — net unrecognised §704(c) "
+                    f"gain (loss), beginning</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>"
+                    f"{_f_n['beginning']:,.0f}</td></tr>"
+                    f"<tr style='background:#eef2f7'><td style='padding:5px 8px'>"
+                    f"<b>N</b> — net unrecognised §704(c) gain (loss), ending</td>"
+                    f"<td style='padding:5px 8px;text-align:right'>"
+                    f"{_f_n['ending']:,.0f}</td></tr>"
                     f"</table></div>", unsafe_allow_html=True)
 
         irc([
@@ -6498,11 +8684,15 @@ elif active_form == "🤝 Form 1065":
             "<span style='color:#C53030'>A partner can show a positive Item L and still have "
             "no basis for losses, or a zero Item L and substantial basis from Item K debt. "
             "Item L alone never tells you whether a loss is deductible.</span>",
-            "<b>Item L is reported on the tax basis</b> since 2020, which is a third measure "
-            "again — outside basis less the partner's share of liabilities.",
-            "<b>Items M and N</b> flag contributed property carrying built-in gain and the "
-            "partner's share of net unrecognised §704(c) gain or loss. Both are covered when "
-            "§704(c) is built out.",
+            "<b>Item L is reported on the tax basis</b> since 2020 — outside basis less the "
+            "partner's share of liabilities. It is not the §704(b) book capital account, "
+            "and it is not §704(b) capital either; three measures, and Item N reports the "
+            "gap between two of them.",
+            "<b>Items M and N</b> are carried from the <b>📐 Formation</b> page. Item M is "
+            "answered Yes whenever contributed property arrived with a built-in gain or "
+            "loss; Item N is the running balance of that gain, which stays attached to the "
+            "contributing partner under §704(c) until the partnership depreciates or sells "
+            "the asset.",
         ])
 
     # PAGE: SCHEDULE M-1 AND M-2
@@ -6617,8 +8807,7 @@ elif active_form == "🤝 Form 1065":
         PARTNERS65 = f65_partners()
         _m2_begin = sum(st.session_state.get(f"f65_ca_begin_{x['i']}", 0.0)
                         for x in PARTNERS65)
-        _m2_contrib = sum(st.session_state.get(f"f65_ca_contrib_{x['i']}", 0.0)
-                          for x in PARTNERS65)
+        _m2_contrib = sum(f65_contributed_capital(x["i"]) for x in PARTNERS65)
         _m2_dist_cash = _g("f65_k_dist_cash")
         _m2_dist_prop = _g("f65_k_dist_prop")
 
@@ -6628,15 +8817,13 @@ elif active_form == "🤝 Form 1065":
         _m2b.number_input("[Line 7] Other decreases ($)", min_value=0.0, step=1_000.0,
                           format="%.2f", key="f65_m2_other_dec")
 
-        _m2_l5 = _m2_begin + _m2_contrib + K65["analysis"] + _g("f65_m2_other_inc")
-        _m2_l8 = _m2_dist_cash + _m2_dist_prop + _g("f65_m2_other_dec")
-        _m2_l9 = _m2_l5 - _m2_l8
+        _m2_l5, _m2_l8, _m2_l9 = M265["line5"], M265["line8"], M265["line9"]
 
         # The sum of the partners' Item L ending balances, computed the same way the K-1
         # page computes each one — so the two cannot disagree.
         _itemL_total = sum(
             st.session_state.get(f"f65_ca_begin_{x['i']}", 0.0)
-            + st.session_state.get(f"f65_ca_contrib_{x['i']}", 0.0)
+            + f65_contributed_capital(x["i"])
             + K65["analysis"] * x["ratio"]
             - (_m2_dist_cash + _m2_dist_prop) * x["ratio"]
             for x in PARTNERS65)
