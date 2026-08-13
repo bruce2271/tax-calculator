@@ -1,6 +1,10 @@
-# Form 1120 — U.S. Corporate Income Tax Return Modeller
+# U.S. Tax Return Modeller — Forms 1120 and 1065
 
 **▶ [Try it live](https://us-tax-calculator.streamlit.app/)** — runs in the browser, nothing to install.
+
+Form 1120 (corporate) is complete. Form 1065 (partnership) is **in progress** —
+the partnership lifecycle calculators are built and tested; see
+[Form 1065](#form-1065--partnership-in-progress) below for what is and is not there yet.
 
 An interactive model of the U.S. corporate income tax return, built to study how the
 mechanics actually fit together — not a rate table, but the machinery: how §263A pulls
@@ -41,6 +45,33 @@ book-tax reconciliations, and the return itself are derived from them.
 
 Plus topic calculators for §351 formations, corporate distributions and §302 redemptions,
 CAMT, Subpart F / GILTI / NCTI, and §199A.
+
+---
+
+## Form 1065 — Partnership (in progress)
+
+> **Status: under construction.** The calculators below are implemented and covered by
+> tests. The surrounding return is not finished, and the sections marked *not yet* are
+> the honest gaps.
+
+Where Form 1120 asks how income becomes tax, a partnership return asks a harder question:
+**whose income is it, and what is each partner's basis in it afterwards?** Almost every
+rule below exists because those two answers move independently.
+
+| Area | Implemented |
+|---|---|
+| **Partner basis mechanics** | §752 liability shares, outside basis, capital account, and the loss limitation stack |
+| **Formation** | §721 non-recognition, §724 character taint, disguised sale, holding period, Item N, interests received for services |
+| **Current distributions** | §704(c)(1)(B), §735 character on later disposition, §751(b) disproportionate distribution flag |
+| **Liquidating distributions** | §736(a) / §736(b) split and the character of §736(a) payments |
+| **Sale of an interest** | Amount realised, §751(a) hot assets split, §704(c) on transfer, §743(b) adjustment, resulting buyer basis |
+| **§754 election** | §734(b) and §743(b) adjustments, §755 allocation between capital and ordinary classes, previously taxed capital, substantial basis reduction, substantial built-in loss |
+
+Each area has its own test module. A worked §754 scenario is included under `examples/`.
+
+**Not yet:** the return pages and schedules that wrap these calculators are still being
+built out, and the edge cases each provision carries are not all covered. Treat this half
+as working machinery, not as a finished return.
 
 ---
 
