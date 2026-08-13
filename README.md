@@ -1,5 +1,7 @@
 # Form 1120 — U.S. Corporate Income Tax Return Modeller
 
+**▶ [Try it live](https://us-tax-calculator.streamlit.app/)** — runs in the browser, nothing to install.
+
 An interactive model of the U.S. corporate income tax return, built to study how the
 mechanics actually fit together — not a rate table, but the machinery: how §263A pulls
 labour and overhead out of period expense and into inventory, why the dividends-received
