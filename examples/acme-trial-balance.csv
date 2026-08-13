@@ -1,0 +1,41 @@
+Account,Account Name,Tax Code,Beginning Balance,Ending Balance
+1000,Cash and cash equivalents,L-1,850000.00,785000.00
+1200,Accounts receivable - trade,L-2a,780000.00,900000.00
+1290,Allowance for doubtful accounts,L-2b,-55000.00,-70000.00
+1400,Inventory - finished goods,L-3,900000.00,1100000.00
+1500,Machinery and equipment,L-10a,3600000.00,4000000.00
+1590,Accumulated depreciation,L-10b,-1300000.00,-1500000.00
+1700,Land,L-12,500000.00,500000.00
+1800,Customer list - acquired,L-13a,600000.00,600000.00
+1890,Accumulated amortisation,L-13b,-160000.00,-200000.00
+2000,Accounts payable - trade,L-16,-720000.00,-800000.00
+2200,Accrued liabilities,L-18,-260000.00,-300000.00
+2500,Note payable - due 2029,L-20,-1600000.00,-1500000.00
+3000,"Common stock, $1 par",L-22,-100000.00,-100000.00
+3100,Additional paid-in capital,L-23,-1900000.00,-1900000.00
+3200,Retained earnings - unappropriated,L-25,-1135000.00,-1135000.00
+4000,Gross sales,C-1a,0.00,-8000000.00
+4090,Sales returns and allowances,C-1b,0.00,100000.00
+4200,Dividend income - domestic,C-4,0.00,-200000.00
+4300,Interest income,C-5,0.00,-120000.00
+5000,Purchases,A-2,0.00,3200000.00
+5100,Direct labour,A-3,0.00,800000.00
+5200,Factory overhead,A-5,0.00,200000.00
+5900,Inventory change - to COGS,A-1,0.00,900000.00
+5910,Inventory change - ending credit,A-7,0.00,-1100000.00
+6000,Officer compensation,C-12,0.00,600000.00
+6100,Salaries and wages,C-13,0.00,1400000.00
+6200,Repairs and maintenance,C-14,0.00,80000.00
+6250,Bad debt expense - book reserve,C-15,0.00,70000.00
+6300,Rent - facilities,C-16,0.00,240000.00
+6400,Taxes and licences,C-17,0.00,180000.00
+6500,Interest expense,C-18,0.00,300000.00
+6600,Charitable contributions,C-19,0.00,150000.00
+6700,Depreciation - book,C-20,0.00,200000.00
+6750,Advertising,C-22,0.00,120000.00
+6800,Pension and profit sharing,C-23,0.00,90000.00
+6850,Employee benefit programmes,C-24,0.00,110000.00
+6900,Meals - client and travel,C-26m,0.00,60000.00
+6950,Fines and penalties,C-26f,0.00,25000.00
+6960,Lobbying and political,C-26l,0.00,15000.00
+3900,Dividends declared,M-5a,0.00,200000.00
