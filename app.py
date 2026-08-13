@@ -27,6 +27,7 @@ from calculators.form_1065_sale import (HOT_CLASSES as HOT_LABELS, calc_704c_tra
                                         calc_buyer_basis, calc_sale_of_interest)
 from calculators.tax_lines import (TAX_LINES, BALANCE_SHEET_SECTIONS, CONTRA_CODES,
                                    check_trial_balance, map_trial_balance)
+from calculators.export import build_workbook
 from calculators.trial_balance import read_trial_balance
 from calculators.schedule_l import (CLOSING_EQUITY, TOTAL_LINES, calc_m2_1065,
                                     calc_m2_1120, spec as _sched_l_spec,
@@ -5107,6 +5108,20 @@ elif section == "📈 Results Summary":
     k4.metric("Total Credits", f"(${r['tax']['credits']['total_credits']:,.0f})")
     color = "normal" if bal <= 0 else "inverse"
     k5.metric("Balance Due / (Refund)", f"${bal:,.0f}", delta_color=color)
+
+    st.divider()
+
+    # The JSON save reconstructs the return inside this app; nobody reviews a return
+    # by reading JSON. The workbook lays the same figures out by schedule, with the
+    # inputs sitting alongside the derived amounts so the arithmetic can be followed.
+    st.download_button(
+        "⬇️ Download working paper (.xlsx)",
+        data=build_workbook(inputs, r, tax_year=st.session_state.get("tax_year")),
+        file_name=f"form1120_working_paper_{st.session_state.get('tax_year', 'return')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="export_xlsx",
+        help="One sheet per schedule. Every figure carries the layer it belongs to "
+             "(input, derived, result) and the IRS form and line it reports to.")
 
     st.divider()
 
