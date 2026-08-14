@@ -417,8 +417,8 @@ if st.session_state.pop("_theme_reset", False):
 
 # Button keys reject a pre-set value at st.button() time; add any new one here.
 BUTTON_KEYS = {"rc_loss_to_line9", "rc_to_cap", "rc_to_other",
-               "sd_lb_to_l9", "roll_forward_btn", "export_btn", "import_btn",
-               "theme_reset", "tb_post_1120", "tb_post_1065"}
+               "sd_lb_to_l9", "roll_forward_btn", "export_btn", "export_xlsx",
+               "import_btn", "theme_reset", "tb_post_1120", "tb_post_1065"}
 # Widgets whose value is not JSON-serialisable and must never be saved or restored.
 NON_PORTABLE_KEYS = {"import_file", "tb_up_1120", "tb_up_1065"}
 
